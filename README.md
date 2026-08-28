@@ -27,21 +27,21 @@ yet suitable for use as a login shell.
 - Login-shell behavior
 - Safe installation, registration in `/etc/shells`, and use with `chsh`
 
-Carli is not yet suitable for use as a login shell. Signal handling, job control,
+carli is not yet suitable for use as a login shell. Signal handling, job control,
 and login-shell behavior should be completed before registering it with `chsh`.
 
 ## Available commands
 
-Carli currently provides these built-in commands:
+carli currently provides these built-in commands:
 
-- `cd [DIRECTORY]` changes Carli's working directory. With no argument, it uses
+- `cd [DIRECTORY]` changes carli's working directory. With no argument, it uses
   `HOME`.
-- `pwd` prints Carli's current working directory.
+- `pwd` prints carli's current working directory.
 - `export NAME=VALUE` adds or updates an environment variable inherited by
-  programs started from Carli.
-- `which COMMAND` reports whether a command is a Carli built-in or prints the
+  programs started from carli.
+- `which COMMAND` reports whether a command is a carli built-in or prints the
   first matching file found through `PATH`.
-- `exit [STATUS]` exits Carli, optionally with a numeric status from 0 to 255.
+- `exit [STATUS]` exits carli, optionally with a numeric status from 0 to 255.
 
 Commands that are not built-ins are treated as external programs. For example,
 `ls -al`, `cargo test`, and `printenv HOME` are located through `PATH` and run as
