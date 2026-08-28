@@ -38,20 +38,65 @@ fn main() {
 
         match words[0].as_str() {
             "cd" => change_directory(&words[1..]),
+            "exit" => exit_shell(&words[1..]),
+            "export" => export_variable(&words[1..]),
             "pwd" => print_working_directory(&words[1..]),
             "which" => which(&words[1..]),
-            "exit" => exit_shell(&words[1..]),
             program => run_external(program, &words[1..]),
         }
     }
 }
 
 fn is_builtin(name: &str) -> bool {
-    matches!(name, "cd" | "pwd" | "which" | "exit")
+    matches!(name, "cd" | "export" | "pwd" | "which" | "exit")
 }
 
 fn report_parse_error(error: ParseError) {
     eprintln!("carli: {error}");
+}
+
+fn export_variable(arguments: &[String]) {
+
+    if arguments.len() != 1 {
+        eprintln!("carli: usage: export NAME=VALUE");
+        return;
+    }
+
+    let assignment = &arguments[0];
+
+    let Some((name, value)) = assignment.split_once('=') else {
+        eprintln!("carli: export: expected NAME=VALUE");
+        return;
+    };
+
+    if !is_valid_variable_name(name) {
+      eprintln!("carli: export: `{name}` is not a valid variable name");
+      return;
+    }
+
+    // TODO: carli is currently single-threaded, so no other
+    // thread can concurrently read or modify the process
+    // environment.
+    unsafe {
+      std::env::set_var(name, value);
+    }
+
+}
+
+fn is_valid_variable_name(name: &str) -> bool {
+    let mut characters = name.chars();
+
+    let Some(first) = characters.next() else {
+      return false;
+    };
+
+    if first != '_' && !first.is_ascii_alphabetic() {
+      return false;
+    }
+
+    characters.all(|character| {
+        character == '_' || character.is_ascii_alphanumeric()
+    })
 }
 
 fn which(arguments: &[String]) {
