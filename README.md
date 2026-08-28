@@ -3,12 +3,49 @@
 `carli` is a small Unix shell written in Rust as a learning project. It is not
 yet suitable for use as a login shell.
 
-## Current features
+## Features
 
-- Runs external programs found through `PATH`
-- Built-ins: `cd`, `pwd`, and `exit`
+### Completed
+
+- Interactive `carli$` prompt
+- Command parsing with whitespace-separated arguments
 - Single quotes, double quotes, and backslash escapes
-- Graceful handling of blank input, EOF, and command errors
+- External program lookup through `PATH`
+- External program execution and waiting for completion
+- Built-in commands for shell state and command lookup
+- Environment-variable export for child processes
+- Graceful handling of blank input, EOF, parse errors, and command errors
+
+### Planned
+
+- Environment-variable expansion, including `$NAME`, `${NAME}`, and `$?`
+- Input and output redirection
+- Pipelines
+- Signal handling
+- Basic foreground and background job control
+- Startup configuration files
+- Login-shell behavior
+- Safe installation, registration in `/etc/shells`, and use with `chsh`
+
+Carli is not yet suitable for use as a login shell. Signal handling, job control,
+and login-shell behavior should be completed before registering it with `chsh`.
+
+## Available commands
+
+Carli currently provides these built-in commands:
+
+- `cd [DIRECTORY]` changes Carli's working directory. With no argument, it uses
+  `HOME`.
+- `pwd` prints Carli's current working directory.
+- `export NAME=VALUE` adds or updates an environment variable inherited by
+  programs started from Carli.
+- `which COMMAND` reports whether a command is a Carli built-in or prints the
+  first matching file found through `PATH`.
+- `exit [STATUS]` exits Carli, optionally with a numeric status from 0 to 255.
+
+Commands that are not built-ins are treated as external programs. For example,
+`ls -al`, `cargo test`, and `printenv HOME` are located through `PATH` and run as
+child processes.
 
 ## Try it
 
@@ -16,12 +53,17 @@ yet suitable for use as a login shell.
 cargo run
 ```
 
-Then try `pwd`, `echo "hello from carli"`, `cd /tmp`, and `exit`.
+Then try:
+
+```text
+pwd
+which cargo
+export GREETING=hello
+printenv GREETING
+echo "hello from carli"
+cd /tmp
+pwd
+exit
+```
 
 Run parser tests with `cargo test`.
-
-## Roadmap
-
-Next: environment expansion and built-ins, redirections, pipelines, signals and
-process groups, then startup/login-shell support. Do not register `carli` with
-`chsh` until those foundations are in place.
