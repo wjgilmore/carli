@@ -1,4 +1,6 @@
 use std::fmt;
+use std::iter::Peekable;
+use std::str::Chars;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
@@ -24,12 +26,34 @@ enum Quote {
     Double,
 }
 
+fn expand_variable(characters: &mut Peekable<Chars<'_>>, output: &mut String) {
+    let mut name = String::new();
+
+    while let Some(character) = characters.peek() {
+        if *character == '_' || character.is_ascii_alphanumeric() {
+            name.push(*character);
+            characters.next();
+        } else {
+            break;
+        }
+    }
+
+    if name.is_empty() {
+        output.push('$');
+        return;
+    }
+
+    if let Ok(value) = std::env::var(&name) {
+        output.push_str(&value);
+    }
+}
+
 pub fn parse_line(line: &str) -> Result<Vec<String>, ParseError> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut quote = Quote::None;
     let mut word_started = false;
-    let mut characters = line.chars();
+    let mut characters = line.chars().peekable();
 
     while let Some(character) = characters.next() {
         match (quote, character) {
@@ -53,6 +77,10 @@ pub fn parse_line(line: &str) -> Result<Vec<String>, ParseError> {
                     words.push(std::mem::take(&mut word));
                     word_started = false;
                 }
+            }
+            (Quote::None | Quote::Double, '$') => {
+                expand_variable(&mut characters, &mut word);
+                word_started = true;
             }
             (_, character) => {
                 word.push(character);
@@ -110,6 +138,42 @@ mod tests {
         assert_eq!(
             parse_line("echo \"hello"),
             Err(ParseError::UnclosedDoubleQuote)
+        );
+    }
+
+    #[test]
+    fn expands_unquoted_variables() {
+        unsafe {
+            std::env::set_var("CARLI_TEST_HOME", "/example/home");
+        }
+
+        assert_eq!(
+            parse_line("echo $CARLI_TEST_HOME/file").unwrap(),
+            vec!["echo", "/example/home/file"]
+        );
+    }
+
+    #[test]
+    fn expands_variables_inside_double_quotes() {
+        unsafe {
+            std::env::set_var("CARLI_TEST_USER", "alice");
+        }
+
+        assert_eq!(
+            parse_line("echo \"hello $CARLI_TEST_USER\"").unwrap(),
+            vec!["echo", "hello alice"]
+        );
+    }
+
+    #[test]
+    fn does_not_expand_variables_inside_single_quotes() {
+        unsafe {
+            std::env::set_var("CARLI_TEST_USER", "alice");
+        }
+
+        assert_eq!(
+            parse_line("echo '$CARLI_TEST_USER'").unwrap(),
+            vec!["echo", "$CARLI_TEST_USER"]
         );
     }
 }

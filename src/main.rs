@@ -56,7 +56,6 @@ fn report_parse_error(error: ParseError) {
 }
 
 fn export_variable(arguments: &[String]) {
-
     if arguments.len() != 1 {
         eprintln!("carli: usage: export NAME=VALUE");
         return;
@@ -70,42 +69,38 @@ fn export_variable(arguments: &[String]) {
     };
 
     if !is_valid_variable_name(name) {
-      eprintln!("carli: export: `{name}` is not a valid variable name");
-      return;
+        eprintln!("carli: export: `{name}` is not a valid variable name");
+        return;
     }
 
     // TODO: carli is currently single-threaded, so no other
     // thread can concurrently read or modify the process
     // environment.
     unsafe {
-      std::env::set_var(name, value);
+        std::env::set_var(name, value);
     }
-
 }
 
 fn is_valid_variable_name(name: &str) -> bool {
     let mut characters = name.chars();
 
     let Some(first) = characters.next() else {
-      return false;
+        return false;
     };
 
     if first != '_' && !first.is_ascii_alphabetic() {
-      return false;
+        return false;
     }
 
-    characters.all(|character| {
-        character == '_' || character.is_ascii_alphanumeric()
-    })
+    characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 fn which(arguments: &[String]) {
-
     let command_name = &arguments[0];
 
     if is_builtin(command_name) {
-      println!("{command_name}: carli built-in");
-      return;
+        println!("{command_name}: carli built-in");
+        return;
     }
 
     if arguments.is_empty() {
@@ -114,27 +109,26 @@ fn which(arguments: &[String]) {
     }
 
     if arguments.len() > 1 {
-      eprintln!("carli: which: too many arguments");
-      return;
+        eprintln!("carli: which: too many arguments");
+        return;
     }
 
     let Some(path) = std::env::var_os("PATH") else {
-      eprintln!("carli: which: PATH is not set");
-      return;
+        eprintln!("carli: which: PATH is not set");
+        return;
     };
 
     let command_name = &arguments[0];
 
     for directory in std::env::split_paths(&path) {
-      let candidate = directory.join(command_name);
-      if candidate.is_file() {
-        println!("{}", candidate.display());
-        return;
-      }
+        let candidate = directory.join(command_name);
+        if candidate.is_file() {
+            println!("{}", candidate.display());
+            return;
+        }
     }
 
     eprintln!("carli: which: {command_name} not found");
-
 }
 
 fn change_directory(arguments: &[String]) {
