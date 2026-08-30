@@ -1,29 +1,39 @@
-use std::io::{self, Write};
+use rustyline::DefaultEditor;
+use rustyline::error::ReadlineError;
+use std::io;
 use std::process::{self, Command};
 
 use carli::{ParseError, parse_line};
 
 fn main() {
-    let stdin = io::stdin();
+    let mut editor = DefaultEditor::new().expect("carli: could not initialize line editor");
     loop {
         let prompt = build_prompt();
-        print!("{prompt}");
-        if let Err(error) = io::stdout().flush() {
-            eprintln!("carli: could not write prompt: {error}");
-            process::exit(1);
-        }
 
-        let mut line = String::new();
-        match stdin.read_line(&mut line) {
-            Ok(0) => {
+        let line = match editor.readline(&prompt) {
+            Ok(line) => line,
+
+            Err(ReadlineError::Interrupted) => {
+                // Ctrl-C cancels the current input.
+                continue;
+            }
+
+            Err(ReadlineError::Eof) => {
+                // Ctrl-D exits carli.
                 println!();
                 break;
             }
-            Ok(_) => {}
+
             Err(error) => {
                 eprintln!("carli: could not read input: {error}");
-                continue;
+                break;
             }
+        };
+
+        if !line.trim().is_empty()
+            && let Err(error) = editor.add_history_entry(line.as_str())
+        {
+            eprintln!("carli: could not add history entry: {error}");
         }
 
         let words = match parse_line(&line) {

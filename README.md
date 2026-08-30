@@ -8,6 +8,7 @@ yet suitable for use as a login shell.
 ### Completed
 
 - Interactive prompt with customizable content
+- Interactive line editing with command history navigation
 - Command parsing with whitespace-separated arguments
 - Single quotes, double quotes, and backslash escapes
 - External program lookup through `PATH`
@@ -24,6 +25,7 @@ yet suitable for use as a login shell.
 
 - Braced variable expansion with `${NAME}`
 - Previous-command status expansion with `$?`
+- Persistent command history across carli sessions
 - Input and output redirection
 - Pipelines
 - Signal handling
@@ -52,6 +54,18 @@ carli currently provides these built-in commands:
 Commands that are not built-ins are treated as external programs. For example,
 `ls -al`, `cargo test`, and `printenv HOME` are located through `PATH` and run as
 child processes.
+
+## Line editing and history
+
+carli keeps commands entered during the current session in memory. Press the Up
+and Down Arrow keys to move through that history, or use the Left and Right
+Arrow keys to edit the current line before running it.
+
+At the prompt, Ctrl-C cancels the current input and presents a fresh prompt.
+Ctrl-D on an empty line exits carli.
+
+History is not yet saved between carli sessions. Persistent history and a
+history file are planned features.
 
 ## Customizing the prompt
 
