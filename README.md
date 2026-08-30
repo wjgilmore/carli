@@ -14,11 +14,16 @@ yet suitable for use as a login shell.
 - External program execution and waiting for completion
 - Built-in commands for shell state and command lookup
 - Environment-variable export for child processes
+- `$NAME` environment-variable expansion in unquoted and double-quoted text,
+  using names that begin with a letter or underscore and continue with letters,
+  digits, or underscores
+- Literal variable text inside single quotes or after a backslash
 - Graceful handling of blank input, EOF, parse errors, and command errors
 
 ### Planned
 
-- Environment-variable expansion, including `$NAME`, `${NAME}`, and `$?`
+- Braced variable expansion with `${NAME}`
+- Previous-command status expansion with `$?`
 - Input and output redirection
 - Pipelines
 - Signal handling
@@ -38,7 +43,8 @@ carli currently provides these built-in commands:
   `HOME`.
 - `pwd` prints carli's current working directory.
 - `export NAME=VALUE` adds or updates an environment variable inherited by
-  programs started from carli.
+  programs started from carli. `NAME` must begin with a letter or underscore
+  and may then contain letters, digits, or underscores.
 - `which COMMAND` reports whether a command is a carli built-in or prints the
   first matching file found through `PATH`.
 - `exit [STATUS]` exits carli, optionally with a numeric status from 0 to 255.
@@ -60,6 +66,8 @@ pwd
 which cargo
 export GREETING=hello
 printenv GREETING
+echo "$GREETING"
+echo '$GREETING'
 echo "hello from carli"
 cd /tmp
 pwd

@@ -29,18 +29,24 @@ enum Quote {
 fn expand_variable(characters: &mut Peekable<Chars<'_>>, output: &mut String) {
     let mut name = String::new();
 
-    while let Some(character) = characters.peek() {
-        if *character == '_' || character.is_ascii_alphanumeric() {
-            name.push(*character);
+    match characters.peek().copied() {
+        Some(character) if character == '_' || character.is_ascii_alphabetic() => {
+            name.push(character);
+            characters.next();
+        }
+        _ => {
+            output.push('$');
+            return;
+        }
+    }
+
+    while let Some(character) = characters.peek().copied() {
+        if character == '_' || character.is_ascii_alphanumeric() {
+            name.push(character);
             characters.next();
         } else {
             break;
         }
-    }
-
-    if name.is_empty() {
-        output.push('$');
-        return;
     }
 
     if let Ok(value) = std::env::var(&name) {
@@ -111,6 +117,11 @@ mod tests {
             parse_line("echo  hello\tworld\n").unwrap(),
             vec!["echo", "hello", "world"]
         );
+    }
+
+    #[test]
+    fn does_not_expand_names_beginning_with_a_digit() {
+        assert_eq!(parse_line("echo $2VALUE").unwrap(), vec!["echo", "$2VALUE"]);
     }
 
     #[test]
