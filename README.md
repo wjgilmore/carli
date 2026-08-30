@@ -7,7 +7,7 @@ yet suitable for use as a login shell.
 
 ### Completed
 
-- Interactive `carli$` prompt
+- Interactive prompt with customizable content
 - Command parsing with whitespace-separated arguments
 - Single quotes, double quotes, and backslash escapes
 - External program lookup through `PATH`
@@ -52,6 +52,40 @@ carli currently provides these built-in commands:
 Commands that are not built-ins are treated as external programs. For example,
 `ls -al`, `cargo test`, and `printenv HOME` are located through `PATH` and run as
 child processes.
+
+## Customizing the prompt
+
+The `CARLI_PROMPT` environment variable controls carli's prompt. Set it from
+inside carli with `export`:
+
+```text
+export CARLI_PROMPT="{user}:{dir}$ "
+```
+
+The prompt supports these placeholders:
+
+- `{cwd}`: full path to the current working directory
+- `{dir}`: name of the current directory
+- `{user}`: value of the `USER` environment variable
+- `{shell}`: the name `carli`
+
+For example:
+
+```text
+export CARLI_PROMPT="{shell}:{cwd}> "
+```
+
+carli rebuilds the prompt before reading each command, so `{cwd}` and `{dir}`
+change immediately after `cd`. Unknown placeholders remain unchanged. When
+`CARLI_PROMPT` is not set, carli uses its default prompt.
+
+Prompt customization does not yet persist after carli exits because startup
+configuration files are still planned. The prompt can also be configured for a
+single session when starting carli from another shell:
+
+```sh
+CARLI_PROMPT='{user}:{dir}$ ' cargo run
+```
 
 ## Try it
 

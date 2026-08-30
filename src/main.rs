@@ -6,7 +6,8 @@ use carli::{ParseError, parse_line};
 fn main() {
     let stdin = io::stdin();
     loop {
-        print!("carli$ ");
+        let prompt = build_prompt();
+        print!("{prompt}");
         if let Err(error) = io::stdout().flush() {
             eprintln!("carli: could not write prompt: {error}");
             process::exit(1);
@@ -177,6 +178,27 @@ fn exit_shell(arguments: &[String]) -> ! {
         None => 0,
     };
     process::exit(status);
+}
+
+fn build_prompt() -> String {
+    let template = std::env::var("CARLI_PROMPT").unwrap_or_else(|_| "carli $ ".to_string());
+
+    let cwd = std::env::current_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "?".to_string());
+
+    let directory = std::env::current_dir()
+        .ok()
+        .and_then(|path| path.file_name()?.to_str().map(str::to_owned))
+        .unwrap_or_else(|| "/".to_string());
+
+    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+
+    template
+        .replace("{cwd}", &cwd)
+        .replace("{dir}", &directory)
+        .replace("{user}", &user)
+        .replace("{shell}", "carli")
 }
 
 fn run_external(program: &str, arguments: &[String]) {
