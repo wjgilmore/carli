@@ -1,13 +1,30 @@
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use std::io;
-use std::process::{self, Command};
+use std::path::PathBuf;
+use std::process::Command;
 
 use carli::{ParseError, parse_line};
 
-fn main() {
+fn history_path() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".carli_history"))
+}
+
+fn main() -> std::process::ExitCode {
     let mut editor = DefaultEditor::new().expect("carli: could not initialize line editor");
-    loop {
+
+    let history_path = history_path();
+
+    if let Some(path) = &history_path
+        && path.exists()
+        && let Err(error) = editor.load_history(path)
+    {
+        eprintln!("carli: could not load history: {error}");
+    }
+
+    let exit_status = loop {
         let prompt = build_prompt();
 
         let line = match editor.readline(&prompt) {
@@ -21,12 +38,12 @@ fn main() {
             Err(ReadlineError::Eof) => {
                 // Ctrl-D exits carli.
                 println!();
-                break;
+                break 0;
             }
 
             Err(error) => {
                 eprintln!("carli: could not read input: {error}");
-                break;
+                break 1;
             }
         };
 
@@ -49,13 +66,25 @@ fn main() {
 
         match words[0].as_str() {
             "cd" => change_directory(&words[1..]),
-            "exit" => exit_shell(&words[1..]),
+            "exit" => {
+                if let Some(status) = exit_status(&words[1..]) {
+                    break status;
+                }
+            }
             "export" => export_variable(&words[1..]),
             "pwd" => print_working_directory(&words[1..]),
             "which" => which(&words[1..]),
             program => run_external(program, &words[1..]),
         }
+    };
+
+    if let Some(path) = &history_path
+        && let Err(error) = editor.save_history(path)
+    {
+        eprintln!("carli: could not save history: {error}");
     }
+
+    std::process::ExitCode::from(exit_status)
 }
 
 fn is_builtin(name: &str) -> bool {
@@ -172,22 +201,22 @@ fn print_working_directory(arguments: &[String]) {
     }
 }
 
-fn exit_shell(arguments: &[String]) -> ! {
+fn exit_status(arguments: &[String]) -> Option<u8> {
     if arguments.len() > 1 {
         eprintln!("carli: exit: too many arguments");
-        process::exit(2);
+        return None;
     }
-    let status = match arguments.first() {
+
+    match arguments.first() {
         Some(value) => match value.parse::<u8>() {
-            Ok(status) => i32::from(status),
+            Ok(status) => Some(status),
             Err(_) => {
                 eprintln!("carli: exit: {value}: numeric argument required");
-                2
+                Some(2)
             }
         },
-        None => 0,
-    };
-    process::exit(status);
+        None => Some(0),
+    }
 }
 
 fn build_prompt() -> String {

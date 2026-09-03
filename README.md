@@ -8,6 +8,7 @@
 
 - Interactive prompt with customizable content
 - Interactive line editing with command history navigation
+- Persistent command history stored in `~/.carli_history`
 - Command parsing with whitespace-separated arguments
 - Single quotes, double quotes, and backslash escapes
 - External program lookup through `PATH`
@@ -24,7 +25,6 @@
 
 - Braced variable expansion with `${NAME}`
 - Previous-command status expansion with `$?`
-- Persistent command history across carli sessions
 - Input and output redirection
 - Pipelines
 - Signal handling
@@ -56,15 +56,13 @@ child processes.
 
 ## Line editing and history
 
-carli keeps commands entered during the current session in memory. Press the Up
-and Down Arrow keys to move through that history, or use the Left and Right
-Arrow keys to edit the current line before running it.
+carli stores command history in `~/.carli_history`. Press the Up and Down Arrow
+keys to move through commands from the current or previous sessions, or use the
+Left and Right Arrow keys to edit the current line before running it.
 
 At the prompt, Ctrl-C cancels the current input and presents a fresh prompt.
-Ctrl-D on an empty line exits carli.
-
-History is not yet saved between carli sessions. Persistent history and a
-history file are planned features.
+Ctrl-D on an empty line exits carli. History is saved when carli exits through
+either Ctrl-D or the `exit` built-in.
 
 ## Customizing the prompt
 
