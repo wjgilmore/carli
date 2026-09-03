@@ -1,7 +1,6 @@
-# carli
+# carli Shell
 
-`carli` is a small Unix shell written in Rust as a learning project. It is not
-yet suitable for use as a login shell.
+`carli` is a small Unix shell written in Rust as a learning project. It is not yet suitable for use as a login shell.
 
 ## Features
 
@@ -110,16 +109,24 @@ cargo run
 Then try:
 
 ```text
-pwd
-which cargo
-export GREETING=hello
-printenv GREETING
-echo "$GREETING"
-echo '$GREETING'
-echo "hello from carli"
-cd /tmp
-pwd
-exit
+carli $ pwd
+/home/wjgilmore/carli
+carli $ which cargo
+/home/wjgilmore/.cargo/bin/cargo
+carli $ export GREETING=hello
+carli $ printenv GREETING
+hello
+carli $ echo "$GREETING"
+hello
+carli $ echo '$GREETING'
+$GREETING
+carli $ echo "hello from carli"
+hello from carli
+carli $ cd /tmp
+carli $ pwd
+/tmp
+$ carli exit
+-> carli git:(master) 
 ```
 
 Run parser tests with `cargo test`.
