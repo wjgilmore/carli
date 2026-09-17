@@ -136,13 +136,6 @@ fn is_valid_variable_name(name: &str) -> bool {
 }
 
 fn which(arguments: &[String]) {
-    let command_name = &arguments[0];
-
-    if is_builtin(command_name) {
-        println!("{command_name}: carli built-in");
-        return;
-    }
-
     if arguments.is_empty() {
         eprintln!("carli: which: not enough arguments");
         return;
@@ -153,12 +146,17 @@ fn which(arguments: &[String]) {
         return;
     }
 
+    let command_name = &arguments[0];
+
+    if is_builtin(command_name) {
+        println!("{command_name}: carli built-in");
+        return;
+    }
+
     let Some(path) = std::env::var_os("PATH") else {
         eprintln!("carli: which: PATH is not set");
         return;
     };
-
-    let command_name = &arguments[0];
 
     for directory in std::env::split_paths(&path) {
         let candidate = directory.join(command_name);

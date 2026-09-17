@@ -18,12 +18,12 @@
 - `$NAME` environment-variable expansion in unquoted and double-quoted text,
   using names that begin with a letter or underscore and continue with letters,
   digits, or underscores
+- Braced environment-variable expansion with `${NAME}`
 - Literal variable text inside single quotes or after a backslash
 - Graceful handling of blank input, EOF, parse errors, and command errors
 
 ### Planned
 
-- Braced variable expansion with `${NAME}`
 - Previous-command status expansion with `$?`
 - Input and output redirection
 - Pipelines
@@ -127,4 +127,13 @@ $ carli exit
 -> carli git:(master) 
 ```
 
-Run parser tests with `cargo test`.
+## Testing
+
+Run the complete test suite from the project directory:
+
+```sh
+cargo test
+```
+
+Cargo will compile carli, run its unit tests, and report whether each test
+passed or failed.

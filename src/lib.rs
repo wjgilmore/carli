@@ -7,6 +7,8 @@ pub enum ParseError {
     UnclosedSingleQuote,
     UnclosedDoubleQuote,
     TrailingEscape,
+    UnclosedVariableBrace,
+    InvalidVariableName,
 }
 
 impl fmt::Display for ParseError {
@@ -15,6 +17,8 @@ impl fmt::Display for ParseError {
             Self::UnclosedSingleQuote => "unclosed single quote",
             Self::UnclosedDoubleQuote => "unclosed double quote",
             Self::TrailingEscape => "trailing backslash",
+            Self::UnclosedVariableBrace => "unclosed variable brace",
+            Self::InvalidVariableName => "invalid variable name",
         })
     }
 }
@@ -26,7 +30,41 @@ enum Quote {
     Double,
 }
 
-fn expand_variable(characters: &mut Peekable<Chars<'_>>, output: &mut String) {
+fn is_valid_variable_name(name: &str) -> bool {
+    let mut characters = name.chars();
+
+    matches!(characters.next(), Some('_' | 'a'..='z' | 'A'..='Z'))
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn expand_variable(
+    characters: &mut Peekable<Chars<'_>>,
+    output: &mut String,
+) -> Result<(), ParseError> {
+    if characters.next_if_eq(&'{').is_some() {
+        let mut name = String::new();
+        let mut closed = false;
+
+        for character in characters.by_ref() {
+            if character == '}' {
+                closed = true;
+                break;
+            }
+            name.push(character);
+        }
+
+        if !closed {
+            return Err(ParseError::UnclosedVariableBrace);
+        }
+        if !is_valid_variable_name(&name) {
+            return Err(ParseError::InvalidVariableName);
+        }
+        if let Ok(value) = std::env::var(&name) {
+            output.push_str(&value);
+        }
+        return Ok(());
+    }
+
     let mut name = String::new();
 
     match characters.peek().copied() {
@@ -36,7 +74,7 @@ fn expand_variable(characters: &mut Peekable<Chars<'_>>, output: &mut String) {
         }
         _ => {
             output.push('$');
-            return;
+            return Ok(());
         }
     }
 
@@ -52,6 +90,8 @@ fn expand_variable(characters: &mut Peekable<Chars<'_>>, output: &mut String) {
     if let Ok(value) = std::env::var(&name) {
         output.push_str(&value);
     }
+
+    Ok(())
 }
 
 pub fn parse_line(line: &str) -> Result<Vec<String>, ParseError> {
@@ -85,7 +125,7 @@ pub fn parse_line(line: &str) -> Result<Vec<String>, ParseError> {
                 }
             }
             (Quote::None | Quote::Double, '$') => {
-                expand_variable(&mut characters, &mut word);
+                expand_variable(&mut characters, &mut word)?;
                 word_started = true;
             }
             (_, character) => {
@@ -177,6 +217,43 @@ mod tests {
     }
 
     #[test]
+    fn expands_braced_variables() {
+        unsafe {
+            std::env::set_var("CARLI_TEST_BRACED_USER", "alice");
+        }
+
+        assert_eq!(
+            parse_line("echo ${CARLI_TEST_BRACED_USER}_backup").unwrap(),
+            vec!["echo", "alice_backup"]
+        );
+    }
+
+    #[test]
+    fn expands_braced_variables_inside_double_quotes() {
+        unsafe {
+            std::env::set_var("CARLI_TEST_BRACED_GREETING", "hello");
+        }
+
+        assert_eq!(
+            parse_line("echo \"${CARLI_TEST_BRACED_GREETING} world\"").unwrap(),
+            vec!["echo", "hello world"]
+        );
+    }
+
+    #[test]
+    fn reports_invalid_braced_variables() {
+        assert_eq!(
+            parse_line("echo ${CARLI_TEST_BRACED_USER"),
+            Err(ParseError::UnclosedVariableBrace)
+        );
+        assert_eq!(
+            parse_line("echo ${2USER}"),
+            Err(ParseError::InvalidVariableName)
+        );
+        assert_eq!(parse_line("echo ${}"), Err(ParseError::InvalidVariableName));
+    }
+
+    #[test]
     fn does_not_expand_variables_inside_single_quotes() {
         unsafe {
             std::env::set_var("CARLI_TEST_USER", "alice");
@@ -185,6 +262,11 @@ mod tests {
         assert_eq!(
             parse_line("echo '$CARLI_TEST_USER'").unwrap(),
             vec!["echo", "$CARLI_TEST_USER"]
+        );
+
+        assert_eq!(
+            parse_line("echo '${CARLI_TEST_BRACED_USER}'").unwrap(),
+            vec!["echo", "${CARLI_TEST_BRACED_USER}"]
         );
     }
 }
