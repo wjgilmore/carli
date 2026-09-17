@@ -27,6 +27,7 @@
 - Previous-command status expansion with `$?`
 - Input and output redirection
 - Pipelines
+- Human-friendly output formatting
 - Signal handling
 - Basic foreground and background job control
 - Startup configuration files
@@ -35,6 +36,51 @@
 
 carli is not yet suitable for use as a login shell. Signal handling, job control,
 and login-shell behavior should be completed before registering it with `chsh`.
+
+## Planned output formatting
+
+> **This feature is a design proposal and has not been implemented yet.** The
+> commands and syntax below do not currently work in carli and may change as the
+> design develops.
+
+One of carli's goals is to make structured output pleasant to explore without
+breaking the Unix convention that programs exchange raw data. The guiding rule
+will be: preserve exact output when it is redirected or passed to another
+program, but allow rich presentation when output is intentionally displayed to
+a person in an interactive terminal.
+
+The first planned step is a `view` command for opening structured files:
+
+```sh
+view customers.csv
+view results.json
+view server.log
+```
+
+The viewer could provide aligned and scrollable tables, search, column
+selection, terminal-width-aware layouts, and a way to inspect the original raw
+content. Initial support would focus on CSV, with TSV and JSON following later.
+
+After carli gains pipelines, `view` could also act as an explicit final stage:
+
+```sh
+generate-report | view --csv
+curl example.com/data.json | view --json
+```
+
+A possible future presentation pipe, written `|>`, could make the distinction
+between data transport and human-facing rendering especially clear:
+
+```sh
+generate-report |> table
+git log |> timeline
+cargo test |> test-report
+```
+
+The ordinary `|` pipe would continue to transfer unmodified data between
+programs. The proposed `|>` operator would explicitly request formatting for
+interactive display. Formatting would remain opt-in so that redirection,
+scripts, and existing command-line tools continue to behave predictably.
 
 ## Available commands
 
