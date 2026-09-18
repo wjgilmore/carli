@@ -61,7 +61,10 @@ fn cd_supports_home_and_reports_all_error_forms() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
-        directory.path().display().to_string()
+        fs::canonicalize(directory.path())
+            .unwrap()
+            .display()
+            .to_string()
     );
 
     let output = run_batch("cd /tmp extra\n", directory.path());
