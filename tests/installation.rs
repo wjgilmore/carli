@@ -72,7 +72,7 @@ fn system_mv() -> &'static str {
 }
 
 fn system_path_with(tools: &Path) -> String {
-    format!("{}:/usr/bin:/bin", tools.display())
+    format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", tools.display())
 }
 
 #[test]
