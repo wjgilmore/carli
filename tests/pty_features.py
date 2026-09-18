@@ -108,8 +108,12 @@ try:
     assert b"130" in send(fd, "echo $?")
     assert b"sleep 30" not in send(fd, "jobs")
 
-    # Ctrl-\ reaches the child as SIGQUIT and becomes status 131.
-    os.write(fd, b"sleep 30\r")
+    # Ctrl-\ reaches the child as SIGQUIT. The helper catches it and exits 131
+    # so this verifies terminal signal routing without creating a core dump.
+    os.write(
+        fd,
+        b"/usr/bin/python3 -c 'import signal,time,sys; signal.signal(signal.SIGQUIT, lambda *_: sys.exit(131)); time.sleep(30)'\r",
+    )
     time.sleep(0.2)
     os.write(fd, b"\x1c")
     read_until(fd)
