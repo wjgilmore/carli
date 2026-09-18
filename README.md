@@ -220,5 +220,7 @@ Run the complete test suite from the project directory:
 cargo test
 ```
 
-Cargo will compile carli, run its unit tests, and report whether each test
-passed or failed.
+Cargo will compile carli and run both its unit and integration tests. The
+integration suite covers command execution, redirection, startup configuration,
+batch mode, history, terminal signals, and job control. The PTY tests require
+`python3`.
