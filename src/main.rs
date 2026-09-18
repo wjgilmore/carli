@@ -14,10 +14,25 @@ use std::process::{Command, Stdio};
 
 use carli::{OutputRedirection, ParseError, parse_command_line_with_status};
 
-struct StoppedJob {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JobState {
+    Running,
+    Stopped,
+}
+
+struct Job {
+    id: usize,
     pid: Pid,
     process_group: Pid,
     command: String,
+    state: JobState,
+}
+
+struct JobControl {
+    interactive: bool,
+    shell_process_group: Pid,
+    jobs: Vec<Job>,
+    next_job_id: usize,
 }
 
 fn history_path() -> Option<PathBuf> {
@@ -52,10 +67,15 @@ fn main() -> std::process::ExitCode {
     }
 
     let mut last_status = 0;
-    let mut stopped_jobs = Vec::new();
+    let mut job_control = JobControl {
+        interactive,
+        shell_process_group,
+        jobs: Vec::new(),
+        next_job_id: 1,
+    };
 
     let exit_status = loop {
-        reap_stopped_jobs(&mut stopped_jobs);
+        reap_jobs(&mut job_control.jobs);
         let prompt = build_prompt();
 
         let line = match editor.readline(&prompt) {
@@ -127,21 +147,23 @@ fn main() -> std::process::ExitCode {
             "export" => last_status = export_variable(&parsed.words[1..]),
             "pwd" => last_status = print_working_directory(&parsed.words[1..], output.as_mut()),
             "which" => last_status = which(&parsed.words[1..], output.as_mut()),
+            "jobs" => {
+                last_status = list_jobs(&parsed.words[1..], &job_control.jobs, output.as_mut())
+            }
+            "fg" => {
+                last_status = foreground_job(&parsed.words[1..], &mut job_control, output.as_mut())
+            }
+            "bg" => {
+                last_status = background_job(&parsed.words[1..], &mut job_control, output.as_mut())
+            }
             program => {
-                last_status = run_external(
-                    program,
-                    &parsed.words[1..],
-                    input,
-                    output,
-                    interactive,
-                    shell_process_group,
-                    &mut stopped_jobs,
-                )
+                last_status =
+                    run_external(program, &parsed.words[1..], input, output, &mut job_control)
             }
         }
     };
 
-    hang_up_stopped_jobs(&stopped_jobs);
+    hang_up_jobs(&job_control.jobs);
 
     if let Some(path) = &history_path
         && let Err(error) = editor.save_history(path)
@@ -153,7 +175,10 @@ fn main() -> std::process::ExitCode {
 }
 
 fn is_builtin(name: &str) -> bool {
-    matches!(name, "cd" | "export" | "pwd" | "which" | "exit")
+    matches!(
+        name,
+        "bg" | "cd" | "exit" | "export" | "fg" | "jobs" | "pwd" | "which"
+    )
 }
 
 fn report_parse_error(error: ParseError) {
@@ -286,6 +311,134 @@ fn write_output(output: Option<&mut File>, line: &str) -> i32 {
     }
 }
 
+fn list_jobs(arguments: &[String], jobs: &[Job], output: Option<&mut File>) -> i32 {
+    if !arguments.is_empty() {
+        eprintln!("carli: jobs: too many arguments");
+        return 1;
+    }
+
+    let mut stdout = io::stdout();
+    let writer: &mut dyn Write = match output {
+        Some(file) => file,
+        None => &mut stdout,
+    };
+
+    for job in jobs {
+        let state = match job.state {
+            JobState::Running => "Running",
+            JobState::Stopped => "Stopped",
+        };
+        if let Err(error) = writeln!(writer, "[{}] {state:<7} {}", job.id, job.command) {
+            eprintln!("carli: jobs: could not write output: {error}");
+            return 1;
+        }
+    }
+
+    0
+}
+
+fn foreground_job(
+    arguments: &[String],
+    job_control: &mut JobControl,
+    output: Option<&mut File>,
+) -> i32 {
+    if !job_control.interactive {
+        eprintln!("carli: fg: job control is unavailable without a terminal");
+        return 1;
+    }
+
+    let index = match find_job(arguments, &job_control.jobs, "fg") {
+        Ok(index) => index,
+        Err(status) => return status,
+    };
+    let mut job = job_control.jobs.remove(index);
+
+    if write_output(output, &job.command) != 0 {
+        job_control.jobs.push(job);
+        return 1;
+    }
+
+    if let Err(error) = tcsetpgrp(io::stdin(), job.process_group) {
+        eprintln!("carli: fg: could not give job the terminal: {error}");
+        job_control.jobs.push(job);
+        return 1;
+    }
+
+    if job.state == JobState::Stopped {
+        if let Err(error) = killpg(job.process_group, Signal::SIGCONT) {
+            eprintln!("carli: fg: could not continue job: {error}");
+            let _ = tcsetpgrp(io::stdin(), job_control.shell_process_group);
+            job_control.jobs.push(job);
+            return 1;
+        }
+        job.state = JobState::Running;
+    }
+
+    let status = wait_for_foreground_job(job, &mut job_control.jobs, &mut job_control.next_job_id);
+    if let Err(error) = tcsetpgrp(io::stdin(), job_control.shell_process_group) {
+        eprintln!("carli: fg: could not reclaim the terminal: {error}");
+        return 1;
+    }
+    status
+}
+
+fn background_job(
+    arguments: &[String],
+    job_control: &mut JobControl,
+    output: Option<&mut File>,
+) -> i32 {
+    if !job_control.interactive {
+        eprintln!("carli: bg: job control is unavailable without a terminal");
+        return 1;
+    }
+
+    let index = match find_job(arguments, &job_control.jobs, "bg") {
+        Ok(index) => index,
+        Err(status) => return status,
+    };
+    let job = &mut job_control.jobs[index];
+
+    if job.state == JobState::Running {
+        eprintln!("carli: bg: job {} is already running", job.id);
+        return 1;
+    }
+    if let Err(error) = killpg(job.process_group, Signal::SIGCONT) {
+        eprintln!("carli: bg: could not continue job {}: {error}", job.id);
+        return 1;
+    }
+    job.state = JobState::Running;
+    write_output(output, &format!("[{}] {}", job.id, job.command))
+}
+
+fn find_job(arguments: &[String], jobs: &[Job], builtin: &str) -> Result<usize, i32> {
+    if arguments.len() > 1 {
+        eprintln!("carli: {builtin}: too many arguments");
+        return Err(1);
+    }
+    if jobs.is_empty() {
+        eprintln!("carli: {builtin}: no current job");
+        return Err(1);
+    }
+
+    let requested_id = match arguments.first() {
+        Some(value) => match value.strip_prefix('%').unwrap_or(value).parse::<usize>() {
+            Ok(id) => id,
+            Err(_) => {
+                eprintln!("carli: {builtin}: {value}: invalid job identifier");
+                return Err(1);
+            }
+        },
+        None => jobs.iter().map(|job| job.id).max().unwrap_or_default(),
+    };
+
+    jobs.iter()
+        .position(|job| job.id == requested_id)
+        .ok_or_else(|| {
+            eprintln!("carli: {builtin}: %{requested_id}: no such job");
+            1
+        })
+}
+
 fn open_output(redirection: &OutputRedirection) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.create(true).write(true);
@@ -349,9 +502,7 @@ fn run_external(
     arguments: &[String],
     input: Option<File>,
     output: Option<File>,
-    interactive: bool,
-    shell_process_group: Pid,
-    stopped_jobs: &mut Vec<StoppedJob>,
+    job_control: &mut JobControl,
 ) -> i32 {
     let mut command = Command::new(program);
     command.args(arguments);
@@ -362,7 +513,7 @@ fn run_external(
         command.stdout(Stdio::from(output));
     }
 
-    if interactive {
+    if job_control.interactive {
         // SAFETY: Only async-signal-safe operations are performed between fork
         // and exec. The child creates its process group and restores the signal
         // dispositions expected by an ordinary foreground program.
@@ -389,7 +540,7 @@ fn run_external(
         }
     };
 
-    if !interactive {
+    if !job_control.interactive {
         return match child.wait() {
             Ok(status) => exit_status_from_process(status),
             Err(error) => {
@@ -420,9 +571,19 @@ fn run_external(
         .chain(arguments.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(" ");
-    let result = wait_for_foreground_job(child_pid, child_pid, command_text, stopped_jobs);
+    let result = wait_for_foreground_job(
+        Job {
+            id: 0,
+            pid: child_pid,
+            process_group: child_pid,
+            command: command_text,
+            state: JobState::Running,
+        },
+        &mut job_control.jobs,
+        &mut job_control.next_job_id,
+    );
 
-    if let Err(error) = tcsetpgrp(io::stdin(), shell_process_group) {
+    if let Err(error) = tcsetpgrp(io::stdin(), job_control.shell_process_group) {
         eprintln!("carli: could not reclaim the terminal: {error}");
         return 1;
     }
@@ -477,23 +638,19 @@ fn foreground_signals() -> [Signal; 5] {
     ]
 }
 
-fn wait_for_foreground_job(
-    pid: Pid,
-    process_group: Pid,
-    command: String,
-    stopped_jobs: &mut Vec<StoppedJob>,
-) -> i32 {
+fn wait_for_foreground_job(mut job: Job, jobs: &mut Vec<Job>, next_job_id: &mut usize) -> i32 {
     loop {
-        match waitpid(pid, Some(WaitPidFlag::WUNTRACED)) {
+        match waitpid(job.pid, Some(WaitPidFlag::WUNTRACED)) {
             Ok(WaitStatus::Exited(_, status)) => return status,
             Ok(WaitStatus::Signaled(_, signal, _)) => return 128 + signal as i32,
             Ok(WaitStatus::Stopped(_, signal)) => {
-                eprintln!("carli: stopped: {command} (pid {pid})");
-                stopped_jobs.push(StoppedJob {
-                    pid,
-                    process_group,
-                    command,
-                });
+                if job.id == 0 {
+                    job.id = *next_job_id;
+                    *next_job_id += 1;
+                }
+                job.state = JobState::Stopped;
+                eprintln!("[{}] Stopped {}", job.id, job.command);
+                jobs.push(job);
                 return 128 + signal as i32;
             }
             Ok(
@@ -504,26 +661,34 @@ fn wait_for_foreground_job(
             ) => {}
             Err(Errno::EINTR) => {}
             Err(error) => {
-                eprintln!("carli: could not wait for {command}: {error}");
+                eprintln!("carli: could not wait for {}: {error}", job.command);
                 return 1;
             }
         }
     }
 }
 
-fn reap_stopped_jobs(jobs: &mut Vec<StoppedJob>) {
-    jobs.retain(|job| {
+fn reap_jobs(jobs: &mut Vec<Job>) {
+    jobs.retain_mut(|job| {
         match waitpid(
             job.pid,
             Some(WaitPidFlag::WNOHANG | WaitPidFlag::WUNTRACED | WaitPidFlag::WCONTINUED),
         ) {
             Ok(WaitStatus::Exited(_, status)) => {
-                eprintln!("carli: completed ({status}): {}", job.command);
+                eprintln!("[{}] Done ({status}) {}", job.id, job.command);
                 false
             }
             Ok(WaitStatus::Signaled(_, signal, _)) => {
-                eprintln!("carli: terminated by {signal}: {}", job.command);
+                eprintln!("[{}] Terminated ({signal}) {}", job.id, job.command);
                 false
+            }
+            Ok(WaitStatus::Stopped(_, _)) => {
+                job.state = JobState::Stopped;
+                true
+            }
+            Ok(WaitStatus::Continued(_)) => {
+                job.state = JobState::Running;
+                true
             }
             Err(Errno::ECHILD) => false,
             Err(error) => {
@@ -535,7 +700,7 @@ fn reap_stopped_jobs(jobs: &mut Vec<StoppedJob>) {
     });
 }
 
-fn hang_up_stopped_jobs(jobs: &[StoppedJob]) {
+fn hang_up_jobs(jobs: &[Job]) {
     for job in jobs {
         let _ = killpg(job.process_group, Signal::SIGHUP);
         let _ = killpg(job.process_group, Signal::SIGCONT);

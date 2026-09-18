@@ -86,15 +86,13 @@ stopped by `SIGTSTP` therefore normally produces status `148`.
 
 carli detects stopped children with `waitpid(..., WUNTRACED)` and immediately
 reclaims the terminal, so <kbd>Ctrl-Z</kbd> cannot leave the shell blocked behind
-a suspended command. It reports the stopped command and retains enough
-information to monitor and clean up its process group.
+a suspended command. It records the job so it can be inspected with `jobs` and
+resumed with `fg` or `bg`. See [Basic job control](job-control.md) for command
+syntax and lifecycle details.
 
-Full job control is not implemented yet. In particular, carli does not yet
-provide `jobs`, `fg`, or `bg`, so a stopped command cannot currently be resumed
-through a carli built-in. If a retained job exits or is terminated by another
-process, carli reaps it before displaying a later prompt. When carli exits, it
-sends `SIGHUP` followed by `SIGCONT` to remaining stopped process groups so they
-do not remain abandoned indefinitely.
+If a retained job exits or is terminated, carli reaps it before displaying a
+later prompt. When carli exits, it sends `SIGHUP` followed by `SIGCONT` to all
+remaining jobs so they do not remain abandoned indefinitely.
 
 ## Non-interactive execution
 

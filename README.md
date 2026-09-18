@@ -22,6 +22,7 @@
 - Previous-command status expansion with `$?`
 - Input redirection with `<` and output redirection with `>` and `>>`
 - Foreground process groups and terminal signal handling
+- Basic job control with `jobs`, `fg`, and `bg`
 - Literal variable text inside single quotes or after a backslash
 - Graceful handling of blank input, EOF, parse errors, and command errors
 
@@ -29,14 +30,13 @@
 
 - Pipelines
 - Human-friendly output formatting
-- Basic foreground and background job control
 - Startup configuration files
 - Login-shell behavior
 - Safe installation, registration in `/etc/shells`, and use with `chsh`
 
-carli is not yet suitable for use as a login shell. Full job control, terminal
-recovery, and login-shell behavior should be completed before registering it
-with `chsh`.
+carli is not yet suitable for use as a login shell. Terminal recovery, startup
+configuration, and login-shell behavior should be completed before registering
+it with `chsh`.
 
 carli gives each interactive external command its own foreground process group.
 Terminal signals such as Ctrl-C and Ctrl-Z therefore affect the command rather
@@ -101,7 +101,15 @@ carli currently provides these built-in commands:
   and may then contain letters, digits, or underscores.
 - `which COMMAND` reports whether a command is a carli built-in or prints the
   first matching file found through `PATH`.
+- `jobs` lists the running and stopped jobs managed by carli.
+- `fg [JOB]` resumes a job in the foreground. With no argument, it selects the
+  most recently created job.
+- `bg [JOB]` resumes a stopped job in the background. With no argument, it
+  selects the most recently created job.
 - `exit [STATUS]` exits carli, optionally with a numeric status from 0 to 255.
+
+Job arguments may be written as either `%1` or `1`. See [Basic job
+control](docs/job-control.md) for examples and current limitations.
 
 Commands that are not built-ins are treated as external programs. For example,
 `ls -al`, `cargo test`, and `printenv HOME` are located through `PATH` and run as
