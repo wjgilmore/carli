@@ -99,14 +99,14 @@ fn pwd_validates_arguments_and_propagates_success() {
 fn export_validates_names_and_reaches_child_processes() {
     let directory = TestDirectory::new("export");
     let output = run_batch(
-        "export CARLI_EXPORTED=value\n/usr/bin/printenv CARLI_EXPORTED\n",
+        "export CARLI_EXPORTED=value\nprintenv CARLI_EXPORTED\n",
         directory.path(),
     );
     assert!(output.status.success());
     assert_eq!(output.stdout, b"value\n");
 
     let output = run_batch(
-        "export _CARLI_VALUE_2=first=part\nexport _CARLI_VALUE_2=updated\n/usr/bin/printenv _CARLI_VALUE_2\n",
+        "export _CARLI_VALUE_2=first=part\nexport _CARLI_VALUE_2=updated\nprintenv _CARLI_VALUE_2\n",
         directory.path(),
     );
     assert!(output.status.success());
@@ -282,7 +282,7 @@ fn home_startup_fallback_status_and_exit_are_honored() {
     fs::write(&config, "export HOME_CONFIG=loaded\n").unwrap();
     let output = carli()
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printenv HOME_CONFIG"])
+        .args(["-c", "printenv HOME_CONFIG"])
         .env("HOME", directory.path())
         .env_remove("XDG_CONFIG_HOME")
         .output()
@@ -293,7 +293,7 @@ fn home_startup_fallback_status_and_exit_are_honored() {
     fs::write(&config, "export BROKEN=\"unterminated\n").unwrap();
     let output = carli()
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printf $?"])
+        .args(["-c", "printf $?"])
         .env("HOME", directory.path())
         .env_remove("XDG_CONFIG_HOME")
         .output()
@@ -303,7 +303,7 @@ fn home_startup_fallback_status_and_exit_are_honored() {
     fs::write(&config, "exit 31\n").unwrap();
     let output = carli()
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printf should-not-run"])
+        .args(["-c", "printf should-not-run"])
         .env("HOME", directory.path())
         .env_remove("XDG_CONFIG_HOME")
         .output()

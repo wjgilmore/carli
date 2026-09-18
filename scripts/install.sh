@@ -10,6 +10,22 @@ usage() {
     exit "${1:-2}"
 }
 
+file_mode() {
+    if mode=$(stat -f '%Lp' "$1" 2>/dev/null); then
+        printf '%s\n' "$mode"
+    else
+        stat -c '%a' "$1"
+    fi
+}
+
+file_owner() {
+    if owner=$(stat -f '%u:%g' "$1" 2>/dev/null); then
+        printf '%s\n' "$owner"
+    else
+        stat -c '%u:%g' "$1"
+    fi
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --binary|--destination|--shells-file)
@@ -66,14 +82,14 @@ cleanup() {
     status=$?
     if [ "$status" -ne 0 ] && [ "$binary_committed" -eq 1 ]; then
         if [ "$had_binary" -eq 1 ]; then
-            mv -f -- "$backup_binary" "$destination"
+            mv -f "$backup_binary" "$destination"
         else
-            rm -f -- "$destination"
+            rm -f "$destination"
         fi
     fi
-    rm -f -- "$staged_binary" "$staged_shells"
+    rm -f "$staged_binary" "$staged_shells"
     if [ -n "$backup_binary" ]; then
-        rm -f -- "$backup_binary"
+        rm -f "$backup_binary"
     fi
     trap - EXIT HUP INT TERM
     exit "$status"
@@ -83,22 +99,22 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-install -m 0755 -- "$binary" "$staged_binary"
+install -m 0755 "$binary" "$staged_binary"
 "$staged_binary" -c 'exit 0'
 
-chmod --reference="$shells_file" "$staged_shells"
-chown --reference="$shells_file" "$staged_shells"
+chmod "$(file_mode "$shells_file")" "$staged_shells"
+chown "$(file_owner "$shells_file")" "$staged_shells"
 awk -v shell="$destination" '$0 != shell { print } END { print shell }' "$shells_file" > "$staged_shells"
 
 if [ -f "$destination" ]; then
     had_binary=1
     backup_binary=$(mktemp "$destination_directory/.carli-backup.XXXXXX")
-    cp -p -- "$destination" "$backup_binary"
+    cp -p "$destination" "$backup_binary"
 fi
 
-mv -f -- "$staged_binary" "$destination"
+mv -f "$staged_binary" "$destination"
 binary_committed=1
-mv -f -- "$staged_shells" "$shells_file"
+mv -f "$staged_shells" "$shells_file"
 binary_committed=0
 
 echo "Installed $destination and registered it in $shells_file"

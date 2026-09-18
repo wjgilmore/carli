@@ -933,12 +933,9 @@ fn wait_for_foreground_job(mut job: Job, jobs: &mut Vec<Job>, next_job_id: &mut 
                 jobs.push(job);
                 return 128 + signal as i32;
             }
-            Ok(
-                WaitStatus::Continued(_)
-                | WaitStatus::PtraceEvent(_, _, _)
-                | WaitStatus::PtraceSyscall(_)
-                | WaitStatus::StillAlive,
-            ) => {}
+            Ok(WaitStatus::Continued(_) | WaitStatus::StillAlive) => {}
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            Ok(WaitStatus::PtraceEvent(_, _, _) | WaitStatus::PtraceSyscall(_)) => {}
             Err(Errno::EINTR) => {
                 if HANGUP_REQUESTED.load(Ordering::Relaxed) {
                     hang_up_job(&job);

@@ -11,6 +11,13 @@ tests, and pseudo-terminal integration tests. The PTY test is launched by a
 Rust test wrapper and requires `python3`; it still runs as part of ordinary
 `cargo test`.
 
+GitHub Actions runs the same commands on `ubuntu-latest` and `macos-latest` for
+every push and pull request. Two failure-path tests use Linux's `/dev/full` and
+are gated to Linux; the rest of the suite, including the process-group,
+terminal, and installer coverage, runs on both platforms. Installer tests also
+exercise simulated BSD `stat` output and macOS Directory Services behavior so
+those safety branches remain covered when tests are run locally on Linux.
+
 The suite deliberately uses separately named tests for independent behavior.
 This keeps a failure in an invocation edge case, parser boundary, built-in,
 startup action, or interactive job-control path from being hidden inside one
@@ -41,7 +48,7 @@ coverage:
 | Terminal-mode preservation | Exact termios snapshots, normal exit, signal termination, repeated stops, `bg`→`fg`, shell recovery, and job-mode restoration in isolated `tests/pty_edge_cases.py` scenarios |
 | `jobs`, `fg`, and `bg` | Stopped/running states, output success/failure, percent/numeric/default selectors, multiple jobs, repeated lifecycle transitions, completion, and errors in PTY tests |
 | Login disconnect and cleanup | `SIGHUP` at the prompt and during foreground, background, and stopped jobs; history persistence; child cleanup; and status 129 in PTY tests |
-| Installation and rollback | CLI validation, smoke-test failures, canonical and whitespace paths, missing newlines, metadata preservation, symlink and non-regular refusal, idempotence, both transaction rollback branches, exact account-assignment protection, unregister, and optional removal in `tests/installation.rs` |
+| Installation and rollback | CLI validation, smoke-test failures, canonical and whitespace paths, missing newlines, GNU/BSD metadata preservation, symlink and non-regular refusal, idempotence, both transaction rollback branches, Linux and macOS exact account-assignment protection, fail-closed Directory Services errors, unregister, and optional removal in `tests/installation.rs` |
 | `-c` and batch input | Output, statuses, usage errors, state persistence, blank lines, EOF, history isolation, and last-status behavior across both non-interactive integration files |
 | XDG-aware startup configuration | XDG precedence, HOME fallback, interactive/login loading, automation isolation, comments, continued errors, startup status, `exit`, prompt configuration, and default PATH across integration and PTY tests |
 | Literal variables in single quotes or after escapes | Dedicated literal-expansion unit tests in `src/lib.rs` |

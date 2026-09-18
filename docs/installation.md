@@ -37,7 +37,8 @@ default.
 
 Before changing the shell:
 
-1. Record the current shell with `getent passwd "$USER"`.
+1. Record the current shell. On Linux use `getent passwd "$USER"`; on macOS use
+   `dscl . -read "/Users/$USER" UserShell`.
 2. Open and keep authenticated a second terminal running the current shell.
 3. Confirm that you can obtain root access from that recovery terminal.
 4. Do not close it until a completely separate carli login succeeds.
@@ -82,8 +83,9 @@ chsh -s /bin/bash
 ```
 
 Use the actual previous path, which may instead be `/bin/zsh` or another shell.
-After confirming `getent passwd "$USER"` shows the restored shell, unregister
-carli while retaining the executable:
+After confirming `getent passwd "$USER"` on Linux or the corresponding `dscl`
+command on macOS shows the restored shell, unregister carli while retaining the
+executable:
 
 ```sh
 sudo ./scripts/uninstall.sh
@@ -96,13 +98,15 @@ remove the binary too:
 sudo ./scripts/uninstall.sh --remove-binary
 ```
 
-The uninstall script checks `/etc/passwd` and refuses to unregister or remove
-carli while any account still names that exact path. By default it only removes
-the `/etc/shells` entry, leaving the executable available as an additional
-recovery safeguard. With `--remove-binary`, it validates that the destination is
-a regular non-symlink before changing `/etc/shells`, so an unsafe removal target
-leaves both the registry and filesystem untouched. Repeated install and
-uninstall operations are idempotent.
+The uninstall script checks `/etc/passwd` on Linux and macOS Directory Services
+through `dscl`, and refuses to unregister or remove carli while any account
+still names that exact path. A failed macOS account query also aborts without
+changes. By default the script only removes the `/etc/shells` entry, leaving the
+executable available as an additional recovery safeguard. With
+`--remove-binary`, it validates that the destination is a regular non-symlink
+before changing `/etc/shells`, so an unsafe removal target leaves both the
+registry and filesystem untouched. Repeated install and uninstall operations
+are idempotent.
 
 ## Custom paths
 
@@ -113,3 +117,6 @@ files.
 
 Run `./scripts/install.sh --help` or `./scripts/uninstall.sh --help` for the
 accepted options.
+
+For macOS prerequisites, platform-specific verification, and recovery commands,
+see [macOS support](macos.md).

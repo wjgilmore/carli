@@ -45,10 +45,7 @@ fn run_with_input(command: &mut Command, input: &str) -> Output {
 
 #[test]
 fn command_mode_propagates_output_and_statuses() {
-    let output = carli()
-        .args(["-c", "/usr/bin/printf hello"])
-        .output()
-        .unwrap();
+    let output = carli().args(["-c", "printf hello"]).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"hello");
 
@@ -85,7 +82,7 @@ fn redirection_reads_truncates_and_appends_real_files() {
     assert!(carli().args(["-c", &command]).status().unwrap().success());
     assert_eq!(fs::read_to_string(&output).unwrap(), "alpha\nbeta\n");
 
-    let command = format!("/usr/bin/printf gamma >> {}", output.display());
+    let command = format!("printf gamma >> {}", output.display());
     assert!(carli().args(["-c", &command]).status().unwrap().success());
     assert_eq!(fs::read_to_string(&output).unwrap(), "alpha\nbeta\ngamma");
 
@@ -104,7 +101,7 @@ fn batch_mode_preserves_state_and_returns_the_last_status() {
     command.env("HOME", directory.path());
     let output = run_with_input(
         &mut command,
-        "export CARLI_BATCH_VALUE=preserved\n/usr/bin/printenv CARLI_BATCH_VALUE\ncd /tmp\npwd\nsh -c \"exit 9\"\n",
+        "export CARLI_BATCH_VALUE=preserved\nprintenv CARLI_BATCH_VALUE\ncd /tmp\npwd\nsh -c \"exit 9\"\n",
     );
 
     assert_eq!(output.status.code(), Some(9));
@@ -119,7 +116,7 @@ fn previous_status_and_builtin_failures_work_end_to_end() {
     let mut command = carli();
     let output = run_with_input(
         &mut command,
-        "cd /definitely/not/a/real/path\n/usr/bin/printf status=$?\n",
+        "cd /definitely/not/a/real/path\nprintf status=$?\n",
     );
 
     assert!(output.status.success());
@@ -153,7 +150,7 @@ fn startup_configuration_uses_xdg_and_isolates_automation() {
 
     let mut normal = carli();
     normal
-        .args(["-c", "/usr/bin/printenv STARTUP_VALUE"])
+        .args(["-c", "printenv STARTUP_VALUE"])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &xdg)
         .env("CARLI_SYSTEM_CONFIG", &system_config);
@@ -164,7 +161,7 @@ fn startup_configuration_uses_xdg_and_isolates_automation() {
     let mut login = carli();
     login
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printenv STARTUP_VALUE"])
+        .args(["-c", "printenv STARTUP_VALUE"])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &xdg)
         .env("CARLI_SYSTEM_CONFIG", &system_config);
@@ -176,7 +173,7 @@ fn startup_configuration_uses_xdg_and_isolates_automation() {
     let mut system = carli();
     system
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printenv SYSTEM_STARTUP_VALUE"])
+        .args(["-c", "printenv SYSTEM_STARTUP_VALUE"])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &xdg)
         .env("CARLI_SYSTEM_CONFIG", &system_config);
@@ -185,7 +182,7 @@ fn startup_configuration_uses_xdg_and_isolates_automation() {
     let mut continued = carli();
     continued
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printenv AFTER_ERROR"])
+        .args(["-c", "printenv AFTER_ERROR"])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &xdg)
         .env("CARLI_SYSTEM_CONFIG", &system_config);
@@ -209,8 +206,9 @@ fn login_shell_supplies_a_default_path_when_path_is_unset() {
 
     let output = command.output().unwrap();
     assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "/usr/bin/echo"
-    );
+    let expected = ["/usr/local/bin/echo", "/usr/bin/echo", "/bin/echo"]
+        .into_iter()
+        .find(|path| Path::new(path).is_file())
+        .expect("the default PATH must contain an echo executable");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
 }

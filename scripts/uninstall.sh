@@ -4,11 +4,28 @@ set -eu
 destination=/usr/local/bin/carli
 shells_file=/etc/shells
 passwd_file=/etc/passwd
+passwd_file_explicit=0
 remove_binary=0
 
 usage() {
     echo "usage: $0 [--destination ABSOLUTE_PATH] [--shells-file ABSOLUTE_PATH] [--passwd-file ABSOLUTE_PATH] [--remove-binary]" >&2
     exit "${1:-2}"
+}
+
+file_mode() {
+    if mode=$(stat -f '%Lp' "$1" 2>/dev/null); then
+        printf '%s\n' "$mode"
+    else
+        stat -c '%a' "$1"
+    fi
+}
+
+file_owner() {
+    if owner=$(stat -f '%u:%g' "$1" 2>/dev/null); then
+        printf '%s\n' "$owner"
+    else
+        stat -c '%u:%g' "$1"
+    fi
 }
 
 while [ "$#" -gt 0 ]; do
@@ -21,7 +38,7 @@ while [ "$#" -gt 0 ]; do
             case "$option" in
                 --destination) destination=$value ;;
                 --shells-file) shells_file=$value ;;
-                --passwd-file) passwd_file=$value ;;
+                --passwd-file) passwd_file=$value; passwd_file_explicit=1 ;;
             esac
             ;;
         --remove-binary)
@@ -61,15 +78,30 @@ if [ "$remove_binary" -eq 1 ]; then
     fi
 fi
 
-if awk -F: -v shell="$destination" '$7 == shell { found = 1 } END { exit !found }' "$passwd_file"; then
+account_uses_shell() {
+    if [ "$(uname -s)" = Darwin ] && [ "$passwd_file_explicit" -eq 0 ]; then
+        directory_users=$(dscl . -list /Users UserShell) || return 2
+        printf '%s\n' "$directory_users" | awk -v shell="$destination" '$NF == shell { found = 1 } END { exit !found }'
+    else
+        awk -F: -v shell="$destination" '$7 == shell { found = 1 } END { exit !found }' "$passwd_file"
+    fi
+}
+
+if account_uses_shell; then
     echo "carli uninstall: $destination is still assigned to at least one account; change those accounts first" >&2
     exit 1
+else
+    account_check_status=$?
+    if [ "$account_check_status" -ne 1 ]; then
+        echo "carli uninstall: could not determine whether $destination is assigned to a macOS account" >&2
+        exit 1
+    fi
 fi
 
 staged_shells=$(mktemp "$shells_directory/.shells-uninstall.XXXXXX")
 cleanup() {
     status=$?
-    rm -f -- "$staged_shells"
+    rm -f "$staged_shells"
     trap - EXIT HUP INT TERM
     exit "$status"
 }
@@ -78,13 +110,13 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-chmod --reference="$shells_file" "$staged_shells"
-chown --reference="$shells_file" "$staged_shells"
+chmod "$(file_mode "$shells_file")" "$staged_shells"
+chown "$(file_owner "$shells_file")" "$staged_shells"
 awk -v shell="$destination" '$0 != shell { print }' "$shells_file" > "$staged_shells"
-mv -f -- "$staged_shells" "$shells_file"
+mv -f "$staged_shells" "$shells_file"
 
 if [ "$remove_binary" -eq 1 ]; then
-    rm -f -- "$destination"
+    rm -f "$destination"
     echo "Unregistered and removed $destination"
 else
     echo "Unregistered $destination; binary retained (use --remove-binary to remove it)"

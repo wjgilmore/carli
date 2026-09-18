@@ -60,7 +60,7 @@ try:
     read_until(fd)
 
     # The interactive startup file configures the prompt and environment.
-    assert b"loaded" in send(fd, "/usr/bin/printenv INTERACTIVE_STARTUP")
+    assert b"loaded" in send(fd, "printenv INTERACTIVE_STARTUP")
 
     # Exporting CARLI_PROMPT inside carli takes effect at the next prompt.
     os.write(fd, b'export CARLI_PROMPT="changed:{dir}> "\r')
@@ -80,7 +80,7 @@ try:
     read_until(fd)
 
     # Cursor movement and insertion edit the line before execution.
-    os.write(fd, b"/usr/bin/printf helo\x1b[D\x1b[C\x1b[Dl\r")
+    os.write(fd, b"printf helo\x1b[D\x1b[C\x1b[Dl\r")
     edited = read_until(fd)
     assert b"hello" in edited, edited
 
@@ -112,7 +112,7 @@ try:
     # so this verifies terminal signal routing without creating a core dump.
     os.write(
         fd,
-        b"/usr/bin/python3 -c 'import signal,time,sys; signal.signal(signal.SIGQUIT, lambda *_: sys.exit(131)); time.sleep(30)'\r",
+        b"python3 -c 'import signal,time,sys; signal.signal(signal.SIGQUIT, lambda *_: sys.exit(131)); time.sleep(30)'\r",
     )
     time.sleep(0.2)
     os.write(fd, b"\x1c")
@@ -153,20 +153,20 @@ try:
     assert b"1" in send(fd, "echo $?")
 
     # Up and Down traverse current-session history in both directions.
-    send(fd, "/usr/bin/printf navigation-one")
-    send(fd, "/usr/bin/printf navigation-two")
+    send(fd, "printf navigation-one")
+    send(fd, "printf navigation-two")
     os.write(fd, b"\x1b[A\x1b[A\x1b[B\r")
     navigated = read_until(fd)
     assert b"navigation-two" in navigated, navigated
 
     # Leave a distinctive final history entry and exit through Ctrl-D.
-    assert b"recalled-marker" in send(fd, "/usr/bin/printf recalled-marker")
+    assert b"recalled-marker" in send(fd, "printf recalled-marker")
     os.write(fd, b"\x04")
     _, raw_status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(raw_status) == 0
 
     history = open(os.path.join(HOME, ".carli_history"), encoding="utf-8").read()
-    assert "/usr/bin/printf recalled-marker" in history
+    assert "printf recalled-marker" in history
 
     # A new session loads history; Up recalls and runs the previous command.
     pid, fd = start()

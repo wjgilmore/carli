@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Install stable Rust with lint and formatting tools
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+      - name: Check shell-script syntax
+        run: sh -n scripts/install.sh scripts/uninstall.sh
+      - name: Check Rust formatting
+        run: cargo fmt --check
+      - name: Run all tests
+        run: cargo test
+      - name: Run strict Clippy checks
+        run: cargo clippy --all-targets -- -D warnings

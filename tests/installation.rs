@@ -1,5 +1,5 @@
 use std::fs;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -62,6 +62,17 @@ fn make_executable(path: &Path, contents: &str) {
     let mut permissions = fs::metadata(path).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(path, permissions).unwrap();
+}
+
+fn system_mv() -> &'static str {
+    ["/usr/bin/mv", "/bin/mv"]
+        .into_iter()
+        .find(|path| Path::new(path).is_file())
+        .expect("tests require the system mv utility")
+}
+
+fn system_path_with(tools: &Path) -> String {
+    format!("{}:/usr/bin:/bin", tools.display())
 }
 
 #[test]
@@ -236,8 +247,9 @@ fn registry_commit_failure_rolls_back_existing_binary() {
     fs::write(
         &fake_mv,
         format!(
-            "#!/bin/sh\ncount=0\n[ ! -f {0} ] || count=$(cat {0})\ncount=$((count + 1))\nprintf '%s' \"$count\" > {0}\n[ \"$count\" -ne 2 ] || exit 1\nexec /usr/bin/mv \"$@\"\n",
-            counter.display()
+            "#!/bin/sh\ncount=0\n[ ! -f {0} ] || count=$(cat {0})\ncount=$((count + 1))\nprintf '%s' \"$count\" > {0}\n[ \"$count\" -ne 2 ] || exit 1\nexec {1} \"$@\"\n",
+            counter.display(),
+            system_mv()
         ),
     )
     .unwrap();
@@ -249,7 +261,7 @@ fn registry_commit_failure_rolls_back_existing_binary() {
         .args(["--binary", env!("CARGO_BIN_EXE_carli")])
         .args(["--destination", destination.to_str().unwrap()])
         .args(["--shells-file", shells.to_str().unwrap()])
-        .env("PATH", format!("{}:/usr/bin:/bin", tools.display()))
+        .env("PATH", system_path_with(&tools))
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
@@ -442,8 +454,9 @@ fn failed_registry_commit_removes_new_binary_when_no_previous_copy_exists() {
     make_executable(
         &fake_mv,
         &format!(
-            "#!/bin/sh\ncount=0\n[ ! -f {0} ] || count=$(cat {0})\ncount=$((count + 1))\nprintf '%s' \"$count\" > {0}\n[ \"$count\" -ne 2 ] || exit 1\nexec /usr/bin/mv \"$@\"\n",
-            counter.display()
+            "#!/bin/sh\ncount=0\n[ ! -f {0} ] || count=$(cat {0})\ncount=$((count + 1))\nprintf '%s' \"$count\" > {0}\n[ \"$count\" -ne 2 ] || exit 1\nexec {1} \"$@\"\n",
+            counter.display(),
+            system_mv()
         ),
     );
 
@@ -451,7 +464,7 @@ fn failed_registry_commit_removes_new_binary_when_no_previous_copy_exists() {
         .args(["--binary", env!("CARGO_BIN_EXE_carli")])
         .args(["--destination", destination.to_str().unwrap()])
         .args(["--shells-file", shells.to_str().unwrap()])
-        .env("PATH", format!("{}:/usr/bin:/bin", tools.display()))
+        .env("PATH", system_path_with(&tools))
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
@@ -479,4 +492,100 @@ fn uninstall_allows_similar_but_not_exact_account_shell() {
     let output = run_uninstall(&destination, &shells, &passwd, false);
     assert!(output.status.success());
     assert_eq!(fs::read_to_string(shells).unwrap(), "/bin/sh\n");
+}
+
+#[test]
+fn installer_supports_bsd_stat_metadata_output() {
+    let directory = TestDirectory::new("bsd-stat");
+    let destination = directory.path().join("carli");
+    let shells = directory.path().join("shells");
+    let tools = directory.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    fs::write(&shells, "/bin/sh\n").unwrap();
+    let mut permissions = fs::metadata(&shells).unwrap().permissions();
+    permissions.set_mode(0o640);
+    fs::set_permissions(&shells, permissions).unwrap();
+
+    make_executable(
+        &tools.join("stat"),
+        &format!(
+            "#!/bin/sh\n[ \"$1\" = -f ] || exit 64\ncase \"$2\" in\n  %Lp) echo 640 ;;\n  %u:%g) echo {}:{} ;;\n  *) exit 64 ;;\nesac\n",
+            fs::metadata(&shells).unwrap().uid(),
+            fs::metadata(&shells).unwrap().gid()
+        ),
+    );
+
+    let output = Command::new(script("install.sh"))
+        .args(["--binary", env!("CARGO_BIN_EXE_carli")])
+        .args(["--destination", destination.to_str().unwrap()])
+        .args(["--shells-file", shells.to_str().unwrap()])
+        .env("PATH", system_path_with(&tools))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::metadata(shells).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}
+
+#[test]
+fn macos_uninstall_refuses_shell_assigned_through_directory_services() {
+    let directory = TestDirectory::new("macos-assigned");
+    let destination = directory.path().join("carli");
+    let shells = directory.path().join("shells");
+    let tools = directory.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_carli"), &destination).unwrap();
+    let registry = format!("/bin/sh\n{}\n", destination.display());
+    fs::write(&shells, &registry).unwrap();
+    make_executable(&tools.join("uname"), "#!/bin/sh\necho Darwin\n");
+    make_executable(
+        &tools.join("dscl"),
+        &format!(
+            "#!/bin/sh\nprintf 'alice  %s\\n' '{}'\n",
+            destination.display()
+        ),
+    );
+
+    let output = Command::new(script("uninstall.sh"))
+        .args(["--destination", destination.to_str().unwrap()])
+        .args(["--shells-file", shells.to_str().unwrap()])
+        .args(["--remove-binary"])
+        .env("PATH", system_path_with(&tools))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(destination.exists());
+    assert_eq!(fs::read_to_string(shells).unwrap(), registry);
+}
+
+#[test]
+fn macos_uninstall_fails_closed_when_directory_services_fails() {
+    let directory = TestDirectory::new("macos-dscl-failure");
+    let destination = directory.path().join("carli");
+    let shells = directory.path().join("shells");
+    let tools = directory.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_carli"), &destination).unwrap();
+    let registry = format!("/bin/sh\n{}\n", destination.display());
+    fs::write(&shells, &registry).unwrap();
+    make_executable(&tools.join("uname"), "#!/bin/sh\necho Darwin\n");
+    make_executable(&tools.join("dscl"), "#!/bin/sh\nexit 70\n");
+
+    let output = Command::new(script("uninstall.sh"))
+        .args(["--destination", destination.to_str().unwrap()])
+        .args(["--shells-file", shells.to_str().unwrap()])
+        .args(["--remove-binary"])
+        .env("PATH", system_path_with(&tools))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("could not determine"));
+    assert!(destination.exists());
+    assert_eq!(fs::read_to_string(shells).unwrap(), registry);
 }

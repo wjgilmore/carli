@@ -113,6 +113,7 @@ fn interactive_errors_leave_terminal_usable() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn failed_fg_output_keeps_stopped_job_recoverable() {
     run_pty_scenario("pty_edge_cases.py", Some("fg_output_failure_retains_job"));
 }

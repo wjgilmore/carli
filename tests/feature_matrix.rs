@@ -35,6 +35,13 @@ fn carli() -> Command {
     Command::new(env!("CARGO_BIN_EXE_carli"))
 }
 
+fn external_program(name: &str) -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").expect("tests require PATH"))
+        .map(|directory| directory.join(name))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| panic!("tests require {name} on PATH"))
+}
+
 fn run_batch(input: &str, home: &Path) -> Output {
     let mut child = carli()
         .env("HOME", home)
@@ -79,7 +86,7 @@ fn arguments_after_c_command_are_rejected() {
 #[test]
 fn command_mode_does_not_treat_semicolon_as_a_separator() {
     let output = carli()
-        .args(["-c", "/usr/bin/printf '%s' 'one;two'"])
+        .args(["-c", "printf '%s' 'one;two'"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -98,7 +105,7 @@ fn batch_eof_returns_success_after_only_comments_and_blank_lines() {
 fn batch_continues_after_parse_and_command_errors() {
     let directory = TestDirectory::new("continue-errors");
     let output = run_batch(
-        "echo \"unterminated\nmissing-carli-command\n/usr/bin/printf survived\n",
+        "echo \"unterminated\nmissing-carli-command\nprintf survived\n",
         directory.path(),
     );
     assert!(output.status.success());
@@ -112,7 +119,7 @@ fn batch_continues_after_parse_and_command_errors() {
 fn batch_status_tracks_each_success_and_failure() {
     let directory = TestDirectory::new("status-sequence");
     let output = run_batch(
-        "sh -c \"exit 19\"\n/usr/bin/printf '%s ' $?\ntrue\n/usr/bin/printf '%s' $?\n",
+        "sh -c \"exit 19\"\nprintf '%s ' $?\ntrue\nprintf '%s' $?\n",
         directory.path(),
     );
     assert!(output.status.success());
@@ -123,7 +130,7 @@ fn batch_status_tracks_each_success_and_failure() {
 fn export_supports_empty_values_and_expansion() {
     let directory = TestDirectory::new("empty-export");
     let output = run_batch(
-        "export CARLI_EMPTY=\n/usr/bin/printf '<%s>' \"$CARLI_EMPTY\"\n",
+        "export CARLI_EMPTY=\nprintf '<%s>' \"$CARLI_EMPTY\"\n",
         directory.path(),
     );
     assert!(output.status.success());
@@ -134,7 +141,7 @@ fn export_supports_empty_values_and_expansion() {
 fn export_value_preserves_spaces_quotes_and_equals() {
     let directory = TestDirectory::new("complex-export");
     let output = run_batch(
-        "export CARLI_COMPLEX=\"hello world=again\"\n/usr/bin/printenv CARLI_COMPLEX\n",
+        "export CARLI_COMPLEX=\"hello world=again\"\nprintenv CARLI_COMPLEX\n",
         directory.path(),
     );
     assert!(output.status.success());
@@ -209,7 +216,7 @@ fn explicit_relative_external_path_executes() {
 #[test]
 fn external_arguments_preserve_empty_and_spaced_words() {
     let output = carli()
-        .args(["-c", "/usr/bin/printf '<%s><%s>' '' 'two words'"])
+        .args(["-c", "printf '<%s><%s>' '' 'two words'"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -246,7 +253,7 @@ fn output_redirection_is_opened_before_builtin_validation() {
 fn append_redirection_creates_a_missing_file() {
     let directory = TestDirectory::new("append-create");
     let output_path = directory.path().join("new-file");
-    let command = format!("/usr/bin/printf created >> {}", output_path.display());
+    let command = format!("printf created >> {}", output_path.display());
     assert!(carli().args(["-c", &command]).status().unwrap().success());
     assert_eq!(fs::read(output_path).unwrap(), b"created");
 }
@@ -256,7 +263,7 @@ fn redirection_paths_expand_variables_and_previous_status() {
     let directory = TestDirectory::new("expanded-paths");
     let output = run_batch(
         &format!(
-            "export CARLI_OUT={}/result\nsh -c \"exit 7\"\n/usr/bin/printf expanded > $CARLI_OUT$?\n",
+            "export CARLI_OUT={}/result\nsh -c \"exit 7\"\nprintf expanded > $CARLI_OUT$?\n",
             directory.path().display()
         ),
         directory.path(),
@@ -271,7 +278,7 @@ fn redirection_paths_expand_variables_and_previous_status() {
 #[test]
 fn quoted_and_escaped_redirection_operators_reach_external_command() {
     let output = carli()
-        .args(["-c", "/usr/bin/printf '%s%s%s' '>' \"<\" \\>"])
+        .args(["-c", "printf '%s%s%s' '>' \"<\" \\>"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -300,9 +307,10 @@ fn jobs_without_a_terminal_is_an_empty_successful_listing() {
 #[test]
 fn login_shell_preserves_an_explicitly_empty_path() {
     let directory = TestDirectory::new("empty-path");
+    let command = format!("{} PATH", external_program("printenv").display());
     let output = carli()
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printenv PATH"])
+        .args(["-c", &command])
         .env("HOME", directory.path())
         .env("PATH", "")
         .env("CARLI_SYSTEM_CONFIG", directory.path().join("missing"))
@@ -325,7 +333,7 @@ fn empty_xdg_config_home_uses_home_fallback() {
     .unwrap();
     let output = carli()
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printenv EMPTY_XDG_FALLBACK"])
+        .args(["-c", "printenv EMPTY_XDG_FALLBACK"])
         .env("HOME", directory.path())
         .env("XDG_CONFIG_HOME", "")
         .env("CARLI_SYSTEM_CONFIG", directory.path().join("missing"))
@@ -345,7 +353,7 @@ fn startup_files_can_change_directory_run_commands_and_redirect() {
     fs::write(
         &config,
         format!(
-            "cd {}\n/usr/bin/printf startup > {}\n",
+            "cd {}\nprintf startup > {}\n",
             destination.display(),
             redirected.display()
         ),
@@ -377,7 +385,7 @@ fn user_startup_observes_system_startup_status() {
     fs::write(xdg.join("config"), "export STATUS_FROM_SYSTEM=$?\n").unwrap();
     let output = carli()
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printenv STATUS_FROM_SYSTEM"])
+        .args(["-c", "printenv STATUS_FROM_SYSTEM"])
         .env("HOME", directory.path())
         .env("XDG_CONFIG_HOME", directory.path().join("xdg"))
         .env("CARLI_SYSTEM_CONFIG", &system)
@@ -392,7 +400,7 @@ fn missing_startup_files_are_silent() {
     let directory = TestDirectory::new("missing-startup");
     let output = carli()
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printf ok"])
+        .args(["-c", "printf ok"])
         .env("HOME", directory.path())
         .env(
             "CARLI_SYSTEM_CONFIG",
@@ -413,7 +421,7 @@ fn startup_exit_without_argument_uses_previous_status() {
     fs::write(&config, "sh -c \"exit 44\"\nexit\n").unwrap();
     let output = carli()
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printf should-not-run"])
+        .args(["-c", "printf should-not-run"])
         .env("HOME", directory.path())
         .env("CARLI_SYSTEM_CONFIG", config)
         .env_remove("XDG_CONFIG_HOME")
@@ -466,6 +474,7 @@ fn cd_accepts_relative_and_quoted_paths() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn builtin_write_failures_return_status_one() {
     for command in ["pwd > /dev/full", "which pwd > /dev/full"] {
         let output = carli().args(["-c", command]).output().unwrap();
@@ -493,7 +502,7 @@ fn startup_read_error_sets_status_and_user_file_still_runs() {
     fs::write(xdg.join("config"), "export SYSTEM_READ_STATUS=$?\n").unwrap();
     let output = carli()
         .arg0("-carli")
-        .args(["-c", "/usr/bin/printenv SYSTEM_READ_STATUS"])
+        .args(["-c", "printenv SYSTEM_READ_STATUS"])
         .env("HOME", directory.path())
         .env("XDG_CONFIG_HOME", directory.path().join("xdg"))
         .env("CARLI_SYSTEM_CONFIG", &system_directory)

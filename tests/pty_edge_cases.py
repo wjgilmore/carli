@@ -91,8 +91,8 @@ def scenario_repeated_prompt_interrupts():
     for _ in range(3):
         os.write(fd, b"partial input\x03")
         read_until(fd)
-        assert b"130" in send(fd, "/usr/bin/printf %s $?")
-    assert b"alive" in send(fd, "/usr/bin/printf alive")
+        assert b"130" in send(fd, "printf %s $?")
+    assert b"alive" in send(fd, "printf alive")
     assert exit_shell(pid, fd) == 0
 
 
@@ -112,7 +112,7 @@ def scenario_job_selection_errors():
         ("bg 1 extra", b"too many arguments"),
     ]:
         assert message in send(fd, command)
-        assert b"1" in send(fd, "/usr/bin/printf %s $?")
+        assert b"1" in send(fd, "printf %s $?")
     os.write(fd, b"fg %1\r")
     interrupt_foreground(fd)
     assert exit_shell(pid, fd) == 0
@@ -125,7 +125,7 @@ def scenario_bg_rejects_running_job():
     assert b"[1] sleep 30" in send(fd, "bg %1")
     already = send(fd, "bg 1")
     assert b"already running" in already
-    assert b"1" in send(fd, "/usr/bin/printf %s $?")
+    assert b"1" in send(fd, "printf %s $?")
     os.write(fd, b"fg\r")
     interrupt_foreground(fd)
     assert exit_shell(pid, fd) == 0
@@ -139,12 +139,12 @@ def scenario_fg_default_and_normal_exit_status():
     time.sleep(0.2)
     os.write(fd, b"\x03")
     read_until(fd)
-    assert b"130" in send(fd, "/usr/bin/printf %s $?")
+    assert b"130" in send(fd, "printf %s $?")
 
     stop_command(fd, "sh -c 'sleep 0.2; exit 17'")
     foregrounded = send(fd, "fg")
     assert b"sh -c sleep 0.2; exit 17" in foregrounded
-    assert b"17" in send(fd, "/usr/bin/printf %s $?")
+    assert b"17" in send(fd, "printf %s $?")
     assert exit_shell(pid, fd) == 0
 
 
@@ -216,11 +216,11 @@ def scenario_job_completion_notifications():
 
 def assert_shell_modes_are_canonical_and_echoing(fd):
     command = (
-        "/usr/bin/python3 -c 'import sys,termios; f=termios.tcgetattr(0)[3]; "
+        "python3 -c 'import sys,termios; f=termios.tcgetattr(0)[3]; "
         "sys.exit(0 if (f&termios.ECHO and f&termios.ICANON) else 42)'"
     )
     send(fd, command)
-    assert b"0" in send(fd, "/usr/bin/printf %s $?")
+    assert b"0" in send(fd, "printf %s $?")
 
 
 def scenario_terminal_modes_normal_exit():
@@ -228,13 +228,13 @@ def scenario_terminal_modes_normal_exit():
     read_until(fd)
     assert_shell_modes_are_canonical_and_echoing(fd)
     command = (
-        "/usr/bin/python3 -c 'import os,termios; "
+        "python3 -c 'import os,termios; "
         "a=termios.tcgetattr(0); a[3]&=~(termios.ECHO|termios.ICANON); "
         "termios.tcsetattr(0,termios.TCSANOW,a); os._exit(0)'"
     )
     send(fd, command)
     assert_shell_modes_are_canonical_and_echoing(fd)
-    assert b"usable" in send(fd, "/usr/bin/printf usable")
+    assert b"usable" in send(fd, "printf usable")
     assert exit_shell(pid, fd) == 0
 
 
@@ -242,7 +242,7 @@ def scenario_terminal_modes_signal_exit():
     pid, fd = start()
     read_until(fd)
     command = (
-        "/usr/bin/python3 -c 'import termios,time; "
+        "python3 -c 'import termios,time; "
         "a=termios.tcgetattr(0); a[3]&=~(termios.ECHO|termios.ICANON); "
         "termios.tcsetattr(0,termios.TCSANOW,a); time.sleep(30)'"
     )
@@ -250,7 +250,7 @@ def scenario_terminal_modes_signal_exit():
     time.sleep(0.2)
     os.write(fd, b"\x03")
     read_until(fd)
-    assert b"130" in send(fd, "/usr/bin/printf %s $?")
+    assert b"130" in send(fd, "printf %s $?")
     assert_shell_modes_are_canonical_and_echoing(fd)
     assert exit_shell(pid, fd) == 0
 
@@ -259,7 +259,7 @@ def scenario_terminal_modes_stop_resume():
     pid, fd = start()
     read_until(fd)
     command = (
-        "/usr/bin/python3 -c 'import os,signal,sys,termios; "
+        "python3 -c 'import os,signal,sys,termios; "
         "a=termios.tcgetattr(0); a[3]&=~termios.ECHO; "
         "termios.tcsetattr(0,termios.TCSANOW,a); "
         "os.kill(os.getpid(),signal.SIGTSTP); "
@@ -270,7 +270,7 @@ def scenario_terminal_modes_stop_resume():
     assert_shell_modes_are_canonical_and_echoing(fd)
     foregrounded = send(fd, "fg")
     assert b"python3 -c" in foregrounded, foregrounded
-    assert b"0" in send(fd, "/usr/bin/printf %s $?")
+    assert b"0" in send(fd, "printf %s $?")
     assert_shell_modes_are_canonical_and_echoing(fd)
     assert exit_shell(pid, fd) == 0
 
@@ -282,10 +282,10 @@ def scenario_complete_termios_snapshot_restored():
     read_until(fd)
     send(
         fd,
-        f"/usr/bin/python3 -c 'import termios; open(\"{before}\",\"w\").write(repr(termios.tcgetattr(0)))'",
+        f"python3 -c 'import termios; open(\"{before}\",\"w\").write(repr(termios.tcgetattr(0)))'",
     )
     command = (
-        "/usr/bin/python3 -c 'import os,termios; a=termios.tcgetattr(0); "
+        "python3 -c 'import os,termios; a=termios.tcgetattr(0); "
         "a[0]^=termios.ICRNL|termios.IXON; a[1]^=termios.OPOST; "
         "a[3]^=termios.ECHO|termios.ICANON|termios.IEXTEN; "
         "a[6][termios.VEOF]=b\"x\"; termios.tcsetattr(0,termios.TCSANOW,a); "
@@ -294,7 +294,7 @@ def scenario_complete_termios_snapshot_restored():
     send(fd, command)
     send(
         fd,
-        f"/usr/bin/python3 -c 'import termios; open(\"{after}\",\"w\").write(repr(termios.tcgetattr(0)))'",
+        f"python3 -c 'import termios; open(\"{after}\",\"w\").write(repr(termios.tcgetattr(0)))'",
     )
     with open(before, encoding="utf-8") as before_file:
         before_modes = before_file.read()
@@ -308,7 +308,7 @@ def scenario_terminal_modes_repeated_stop_resume():
     pid, fd = start()
     read_until(fd)
     command = (
-        "/usr/bin/python3 -c 'import os,signal,sys,termios; "
+        "python3 -c 'import os,signal,sys,termios; "
         "a=termios.tcgetattr(0); a[3]&=~termios.ECHO; "
         "termios.tcsetattr(0,termios.TCSANOW,a); os.kill(os.getpid(),signal.SIGTSTP); "
         "a=termios.tcgetattr(0); "
@@ -325,7 +325,7 @@ def scenario_terminal_modes_repeated_stop_resume():
     assert b"[1] Stopped" in second, second
     assert_shell_modes_are_canonical_and_echoing(fd)
     send(fd, "fg")
-    assert b"0" in send(fd, "/usr/bin/printf %s $?")
+    assert b"0" in send(fd, "printf %s $?")
     assert_shell_modes_are_canonical_and_echoing(fd)
     assert exit_shell(pid, fd) == 0
 
@@ -345,12 +345,12 @@ def scenario_terminal_modes_bg_then_fg():
             "    time.sleep(0.02)\n"
             "sys.exit(0 if not (termios.tcgetattr(0)[3] & termios.ECHO) else 42)\n"
         )
-    stopped = send(fd, f"/usr/bin/python3 {helper}")
+    stopped = send(fd, f"python3 {helper}")
     assert b"[1] Stopped" in stopped, stopped
     assert b"[1]" in send(fd, "bg")
     assert_shell_modes_are_canonical_and_echoing(fd)
     send(fd, "fg")
-    assert b"0" in send(fd, "/usr/bin/printf %s $?")
+    assert b"0" in send(fd, "printf %s $?")
     assert_shell_modes_are_canonical_and_echoing(fd)
     assert exit_shell(pid, fd) == 0
 
@@ -366,9 +366,9 @@ def scenario_interactive_errors_preserve_terminal():
     for command, message, status in cases:
         result = send(fd, command)
         assert message in result, result
-        assert status in send(fd, "/usr/bin/printf %s $?")
+        assert status in send(fd, "printf %s $?")
         assert_shell_modes_are_canonical_and_echoing(fd)
-    assert b"still-usable" in send(fd, "/usr/bin/printf still-usable")
+    assert b"still-usable" in send(fd, "printf still-usable")
     assert exit_shell(pid, fd) == 0
 
 
@@ -412,7 +412,7 @@ def scenario_history_load_and_save_errors_are_nonfatal():
     pid, fd = start()
     startup = read_until(fd)
     assert b"could not load history" in startup, startup
-    assert b"usable" in send(fd, "/usr/bin/printf usable")
+    assert b"usable" in send(fd, "printf usable")
     os.write(fd, b"exit 0\r")
     output = b""
     while True:
@@ -435,24 +435,24 @@ def scenario_blank_lines_are_not_saved_to_history():
     read_until(fd)
     send(fd, "   ")
     send(fd, "\t")
-    send(fd, "/usr/bin/printf history-marker")
+    send(fd, "printf history-marker")
     assert exit_shell(pid, fd) == 0
     with open(os.path.join(HOME, ".carli_history"), encoding="utf-8") as history_file:
         history = history_file.read().splitlines()
     assert "   " not in history
     assert "\t" not in history
-    assert "/usr/bin/printf history-marker" in history
+    assert "printf history-marker" in history
 
 
 def scenario_sighup_at_prompt_saves_history():
     pid, fd = start()
     read_until(fd)
-    send(fd, "/usr/bin/printf hangup-history-marker")
+    send(fd, "printf hangup-history-marker")
     os.kill(pid, signal.SIGHUP)
     _, raw_status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(raw_status) == 129
     with open(os.path.join(HOME, ".carli_history"), encoding="utf-8") as history_file:
-        assert "/usr/bin/printf hangup-history-marker" in history_file.read()
+        assert "printf hangup-history-marker" in history_file.read()
 
 
 def scenario_sighup_cleans_stopped_job():
@@ -503,12 +503,12 @@ def scenario_sighup_cleans_foreground_job():
 def scenario_real_pty_disconnect_saves_history():
     pid, fd = start()
     read_until(fd)
-    send(fd, "/usr/bin/printf disconnect-history-marker")
+    send(fd, "printf disconnect-history-marker")
     os.close(fd)
     _, raw_status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(raw_status) == 129
     with open(os.path.join(HOME, ".carli_history"), encoding="utf-8") as history_file:
-        assert "/usr/bin/printf disconnect-history-marker" in history_file.read()
+        assert "printf disconnect-history-marker" in history_file.read()
 
 
 SCENARIOS = {
