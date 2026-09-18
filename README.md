@@ -21,6 +21,7 @@
 - Braced environment-variable expansion with `${NAME}`
 - Previous-command status expansion with `$?`
 - Input redirection with `<` and output redirection with `>` and `>>`
+- Foreground process groups and terminal signal handling
 - Literal variable text inside single quotes or after a backslash
 - Graceful handling of blank input, EOF, parse errors, and command errors
 
@@ -28,14 +29,20 @@
 
 - Pipelines
 - Human-friendly output formatting
-- Signal handling
 - Basic foreground and background job control
 - Startup configuration files
 - Login-shell behavior
 - Safe installation, registration in `/etc/shells`, and use with `chsh`
 
-carli is not yet suitable for use as a login shell. Signal handling, job control,
-and login-shell behavior should be completed before registering it with `chsh`.
+carli is not yet suitable for use as a login shell. Full job control, terminal
+recovery, and login-shell behavior should be completed before registering it
+with `chsh`.
+
+carli gives each interactive external command its own foreground process group.
+Terminal signals such as Ctrl-C and Ctrl-Z therefore affect the command rather
+than carli itself, and carli reclaims the terminal before displaying its next
+prompt. See [Foreground process groups and signals](docs/foreground-process-groups.md)
+for the design, behavior, and current job-control limitations.
 
 ## Planned output formatting
 

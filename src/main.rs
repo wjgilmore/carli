@@ -1,13 +1,24 @@
+use nix::errno::Errno;
+use nix::sys::signal::{self, SigHandler, Signal, killpg};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::{Pid, getpgrp, getpid, setpgid, tcgetpgrp, tcsetpgrp};
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
+use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use carli::{OutputRedirection, ParseError, parse_command_line_with_status};
+
+struct StoppedJob {
+    pid: Pid,
+    process_group: Pid,
+    command: String,
+}
 
 fn history_path() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -16,6 +27,19 @@ fn history_path() -> Option<PathBuf> {
 }
 
 fn main() -> std::process::ExitCode {
+    let interactive = io::stdin().is_terminal();
+    let shell_process_group = if interactive {
+        match setup_interactive_shell() {
+            Ok(process_group) => process_group,
+            Err(error) => {
+                eprintln!("carli: could not initialize job control: {error}");
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+    } else {
+        getpgrp()
+    };
+
     let mut editor = DefaultEditor::new().expect("carli: could not initialize line editor");
 
     let history_path = history_path();
@@ -28,8 +52,10 @@ fn main() -> std::process::ExitCode {
     }
 
     let mut last_status = 0;
+    let mut stopped_jobs = Vec::new();
 
     let exit_status = loop {
+        reap_stopped_jobs(&mut stopped_jobs);
         let prompt = build_prompt();
 
         let line = match editor.readline(&prompt) {
@@ -101,9 +127,21 @@ fn main() -> std::process::ExitCode {
             "export" => last_status = export_variable(&parsed.words[1..]),
             "pwd" => last_status = print_working_directory(&parsed.words[1..], output.as_mut()),
             "which" => last_status = which(&parsed.words[1..], output.as_mut()),
-            program => last_status = run_external(program, &parsed.words[1..], input, output),
+            program => {
+                last_status = run_external(
+                    program,
+                    &parsed.words[1..],
+                    input,
+                    output,
+                    interactive,
+                    shell_process_group,
+                    &mut stopped_jobs,
+                )
+            }
         }
     };
+
+    hang_up_stopped_jobs(&stopped_jobs);
 
     if let Some(path) = &history_path
         && let Err(error) = editor.save_history(path)
@@ -311,6 +349,9 @@ fn run_external(
     arguments: &[String],
     input: Option<File>,
     output: Option<File>,
+    interactive: bool,
+    shell_process_group: Pid,
+    stopped_jobs: &mut Vec<StoppedJob>,
 ) -> i32 {
     let mut command = Command::new(program);
     command.args(arguments);
@@ -321,18 +362,193 @@ fn run_external(
         command.stdout(Stdio::from(output));
     }
 
-    match command.status() {
-        Ok(status) => status
-            .code()
-            .or_else(|| status.signal().map(|signal| 128 + signal))
-            .unwrap_or(1),
+    if interactive {
+        // SAFETY: Only async-signal-safe operations are performed between fork
+        // and exec. The child creates its process group and restores the signal
+        // dispositions expected by an ordinary foreground program.
+        unsafe {
+            command.pre_exec(|| {
+                setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(errno_to_io)?;
+                for signal in foreground_signals() {
+                    signal::signal(signal, SigHandler::SigDfl).map_err(errno_to_io)?;
+                }
+                Ok(())
+            });
+        }
+    }
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             eprintln!("carli: {program}: command not found");
-            127
+            return 127;
         }
         Err(error) => {
             eprintln!("carli: {program}: {error}");
-            126
+            return 126;
+        }
+    };
+
+    if !interactive {
+        return match child.wait() {
+            Ok(status) => exit_status_from_process(status),
+            Err(error) => {
+                eprintln!("carli: {program}: could not wait for command: {error}");
+                1
+            }
+        };
+    }
+
+    let child_pid = Pid::from_raw(child.id() as i32);
+    if let Err(error) = setpgid(child_pid, child_pid)
+        && error != Errno::EACCES
+    {
+        eprintln!("carli: {program}: could not create process group: {error}");
+        let _ = killpg(child_pid, Signal::SIGKILL);
+        let _ = child.wait();
+        return 1;
+    }
+
+    if let Err(error) = tcsetpgrp(io::stdin(), child_pid) {
+        eprintln!("carli: {program}: could not give command the terminal: {error}");
+        let _ = killpg(child_pid, Signal::SIGKILL);
+        let _ = child.wait();
+        return 1;
+    }
+
+    let command_text = std::iter::once(program)
+        .chain(arguments.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let result = wait_for_foreground_job(child_pid, child_pid, command_text, stopped_jobs);
+
+    if let Err(error) = tcsetpgrp(io::stdin(), shell_process_group) {
+        eprintln!("carli: could not reclaim the terminal: {error}");
+        return 1;
+    }
+
+    result
+}
+
+fn setup_interactive_shell() -> io::Result<Pid> {
+    loop {
+        let process_group = getpgrp();
+        let foreground_group = tcgetpgrp(io::stdin()).map_err(errno_to_io)?;
+        if process_group == foreground_group {
+            break;
+        }
+
+        // SAFETY: A shell started in the background must stop until its parent
+        // moves it to the foreground. Resetting SIGTTIN first avoids spinning
+        // if that signal was inherited as ignored.
+        unsafe {
+            signal::signal(Signal::SIGTTIN, SigHandler::SigDfl).map_err(errno_to_io)?;
+        }
+        killpg(process_group, Signal::SIGTTIN).map_err(errno_to_io)?;
+    }
+
+    for signal in foreground_signals() {
+        // SAFETY: Ignoring these signals is the standard disposition for an
+        // interactive shell, and rustyline temporarily installs its own
+        // SIGINT handler while reading input.
+        unsafe {
+            signal::signal(signal, SigHandler::SigIgn).map_err(errno_to_io)?;
         }
     }
+
+    let pid = getpid();
+    match setpgid(pid, pid) {
+        Ok(()) | Err(Errno::EPERM) | Err(Errno::EACCES) => {}
+        Err(error) => return Err(errno_to_io(error)),
+    }
+
+    let process_group = getpgrp();
+    tcsetpgrp(io::stdin(), process_group).map_err(errno_to_io)?;
+    Ok(process_group)
+}
+
+fn foreground_signals() -> [Signal; 5] {
+    [
+        Signal::SIGINT,
+        Signal::SIGQUIT,
+        Signal::SIGTSTP,
+        Signal::SIGTTIN,
+        Signal::SIGTTOU,
+    ]
+}
+
+fn wait_for_foreground_job(
+    pid: Pid,
+    process_group: Pid,
+    command: String,
+    stopped_jobs: &mut Vec<StoppedJob>,
+) -> i32 {
+    loop {
+        match waitpid(pid, Some(WaitPidFlag::WUNTRACED)) {
+            Ok(WaitStatus::Exited(_, status)) => return status,
+            Ok(WaitStatus::Signaled(_, signal, _)) => return 128 + signal as i32,
+            Ok(WaitStatus::Stopped(_, signal)) => {
+                eprintln!("carli: stopped: {command} (pid {pid})");
+                stopped_jobs.push(StoppedJob {
+                    pid,
+                    process_group,
+                    command,
+                });
+                return 128 + signal as i32;
+            }
+            Ok(
+                WaitStatus::Continued(_)
+                | WaitStatus::PtraceEvent(_, _, _)
+                | WaitStatus::PtraceSyscall(_)
+                | WaitStatus::StillAlive,
+            ) => {}
+            Err(Errno::EINTR) => {}
+            Err(error) => {
+                eprintln!("carli: could not wait for {command}: {error}");
+                return 1;
+            }
+        }
+    }
+}
+
+fn reap_stopped_jobs(jobs: &mut Vec<StoppedJob>) {
+    jobs.retain(|job| {
+        match waitpid(
+            job.pid,
+            Some(WaitPidFlag::WNOHANG | WaitPidFlag::WUNTRACED | WaitPidFlag::WCONTINUED),
+        ) {
+            Ok(WaitStatus::Exited(_, status)) => {
+                eprintln!("carli: completed ({status}): {}", job.command);
+                false
+            }
+            Ok(WaitStatus::Signaled(_, signal, _)) => {
+                eprintln!("carli: terminated by {signal}: {}", job.command);
+                false
+            }
+            Err(Errno::ECHILD) => false,
+            Err(error) => {
+                eprintln!("carli: could not check stopped job {}: {error}", job.pid);
+                true
+            }
+            _ => true,
+        }
+    });
+}
+
+fn hang_up_stopped_jobs(jobs: &[StoppedJob]) {
+    for job in jobs {
+        let _ = killpg(job.process_group, Signal::SIGHUP);
+        let _ = killpg(job.process_group, Signal::SIGCONT);
+    }
+}
+
+fn exit_status_from_process(status: std::process::ExitStatus) -> i32 {
+    status
+        .code()
+        .or_else(|| status.signal().map(|signal| 128 + signal))
+        .unwrap_or(1)
+}
+
+fn errno_to_io(error: Errno) -> io::Error {
+    io::Error::from_raw_os_error(error as i32)
 }
