@@ -336,6 +336,23 @@ mod tests {
     }
 
     #[test]
+    fn handles_unset_empty_and_literal_dollar_variables() {
+        unsafe {
+            std::env::remove_var("CARLI_TEST_UNSET_VALUE");
+            std::env::set_var("CARLI_TEST_EMPTY_VALUE", "");
+        }
+
+        assert_eq!(
+            parse_line("echo before$CARLI_TEST_UNSET_VALUE after").unwrap(),
+            vec!["echo", "before", "after"]
+        );
+        assert_eq!(
+            parse_line("echo \"$CARLI_TEST_EMPTY_VALUE\" $ $- ").unwrap(),
+            vec!["echo", "", "$", "$-"]
+        );
+    }
+
+    #[test]
     fn expands_variables_inside_double_quotes() {
         unsafe {
             std::env::set_var("CARLI_TEST_USER", "alice");

@@ -223,4 +223,5 @@ cargo test
 Cargo will compile carli and run both its unit and integration tests. The
 integration suite covers command execution, redirection, startup configuration,
 batch mode, history, terminal signals, and job control. The PTY tests require
-`python3`.
+`python3`. See [Testing carli](docs/testing.md) for the feature-by-feature
+coverage map and complete verification commands.
