@@ -12,6 +12,10 @@ CARLI = os.path.abspath(sys.argv[1])
 HOME = tempfile.mkdtemp(prefix="carli-pty-tests-", dir="/tmp")
 START_DIRECTORY = os.getcwd()
 PROMPT = f"carli:carli-test:carli:{START_DIRECTORY}:{{unknown}}> ".encode()
+os.makedirs(os.path.join(HOME, ".config", "carli"))
+with open(os.path.join(HOME, ".config", "carli", "config"), "w", encoding="utf-8") as config:
+    config.write('export CARLI_PROMPT="{shell}:{user}:{dir}:{cwd}:{unknown}> "\n')
+    config.write("export INTERACTIVE_STARTUP=loaded\n")
 
 
 def start():
@@ -20,7 +24,9 @@ def start():
         environment = os.environ.copy()
         environment["HOME"] = HOME
         environment["USER"] = "carli-test"
-        environment["CARLI_PROMPT"] = "{shell}:{user}:{dir}:{cwd}:{unknown}> "
+        environment.pop("CARLI_PROMPT", None)
+        environment.pop("XDG_CONFIG_HOME", None)
+        environment.pop("CARLI_SYSTEM_CONFIG", None)
         os.execve(CARLI, [CARLI], environment)
     return pid, fd
 
@@ -53,6 +59,15 @@ try:
     pid, fd = start()
     read_until(fd)
 
+    # The interactive startup file configures the prompt and environment.
+    assert b"loaded" in send(fd, "/usr/bin/printenv INTERACTIVE_STARTUP")
+
+    # Exporting CARLI_PROMPT inside carli takes effect at the next prompt.
+    os.write(fd, b'export CARLI_PROMPT="changed:{dir}> "\r')
+    read_until(fd, b"changed:carli> ")
+    os.write(fd, b'export CARLI_PROMPT="{shell}:{user}:{dir}:{cwd}:{unknown}> "\r')
+    read_until(fd)
+
     # Ctrl-C at the prompt cancels input and keeps the shell alive.
     os.write(fd, b"unfinished\x03")
     read_until(fd)
@@ -65,7 +80,7 @@ try:
     read_until(fd)
 
     # Cursor movement and insertion edit the line before execution.
-    os.write(fd, b"/usr/bin/printf helo\x1b[D\x1b[Dl\r")
+    os.write(fd, b"/usr/bin/printf helo\x1b[D\x1b[C\x1b[Dl\r")
     edited = read_until(fd)
     assert b"hello" in edited, edited
 
@@ -109,15 +124,26 @@ try:
         assert f"[{expected_id}] Stopped sleep 30".encode() in stopped, stopped
     listed = send(fd, "jobs")
     assert b"[2] Stopped sleep 30" in listed and b"[3] Stopped sleep 30" in listed
-    os.write(fd, b"fg %2\r")
+    jobs_file = os.path.join(HOME, "jobs.txt")
+    send(fd, f'jobs > "{jobs_file}"')
+    with open(jobs_file, "rb") as saved_jobs:
+        contents = saved_jobs.read()
+    assert b"[2] Stopped sleep 30" in contents and b"[3] Stopped sleep 30" in contents
+
+    # bg with no argument selects the newest job; numeric IDs work without `%`.
+    assert b"[3] sleep 30" in send(fd, "bg")
+    os.write(fd, b"fg 3\r")
     time.sleep(0.2)
     os.write(fd, b"\x03")
     read_until(fd)
-    os.write(fd, b"fg\r")
+    os.write(fd, b"fg 2\r")
     time.sleep(0.2)
     os.write(fd, b"\x03")
     read_until(fd)
     assert b"sleep 30" not in send(fd, "jobs")
+    jobs_error = send(fd, "jobs extra")
+    assert b"too many arguments" in jobs_error
+    assert b"1" in send(fd, "echo $?")
     missing_job = send(fd, "fg %99")
     assert b"no current job" in missing_job
     assert b"1" in send(fd, "echo $?")
@@ -147,5 +173,21 @@ try:
     os.write(fd, b"exit\r")
     _, raw_status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(raw_status) == 0
+    history = open(os.path.join(HOME, ".carli_history"), encoding="utf-8").read()
+    assert "exit" in history, "exit built-in did not save history"
+
+    # With no CARLI_PROMPT and no startup config, carli uses its default prompt.
+    default_home = tempfile.mkdtemp(prefix="carli-default-prompt-", dir="/tmp")
+    pid, fd = pty.fork()
+    if pid == 0:
+        environment = os.environ.copy()
+        environment["HOME"] = default_home
+        environment.pop("CARLI_PROMPT", None)
+        os.execve(CARLI, [CARLI], environment)
+    read_until(fd, b"carli $ ")
+    os.write(fd, b"\x04")
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 0
+    shutil.rmtree(default_home, ignore_errors=True)
 finally:
     shutil.rmtree(HOME, ignore_errors=True)

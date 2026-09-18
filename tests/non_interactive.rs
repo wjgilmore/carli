@@ -132,11 +132,17 @@ fn startup_configuration_uses_xdg_and_isolates_automation() {
     let directory = TestDirectory::new("startup");
     let home = directory.path().join("home");
     let xdg = directory.path().join("xdg");
+    let system_config = directory.path().join("system-config");
     fs::create_dir_all(home.join(".config/carli")).unwrap();
     fs::create_dir_all(xdg.join("carli")).unwrap();
     fs::write(
         home.join(".config/carli/config"),
         "export STARTUP_VALUE=from-home\n",
+    )
+    .unwrap();
+    fs::write(
+        &system_config,
+        "export SYSTEM_STARTUP_VALUE=from-system\nexport STARTUP_VALUE=from-system\n",
     )
     .unwrap();
     fs::write(
@@ -149,7 +155,8 @@ fn startup_configuration_uses_xdg_and_isolates_automation() {
     normal
         .args(["-c", "/usr/bin/printenv STARTUP_VALUE"])
         .env("HOME", &home)
-        .env("XDG_CONFIG_HOME", &xdg);
+        .env("XDG_CONFIG_HOME", &xdg)
+        .env("CARLI_SYSTEM_CONFIG", &system_config);
     let output = normal.output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
@@ -159,18 +166,29 @@ fn startup_configuration_uses_xdg_and_isolates_automation() {
         .arg0("-carli")
         .args(["-c", "/usr/bin/printenv STARTUP_VALUE"])
         .env("HOME", &home)
-        .env("XDG_CONFIG_HOME", &xdg);
+        .env("XDG_CONFIG_HOME", &xdg)
+        .env("CARLI_SYSTEM_CONFIG", &system_config);
     let output = login.output().unwrap();
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "from-xdg");
     assert!(String::from_utf8_lossy(&output.stderr).contains("config:3: unclosed double quote"));
+
+    let mut system = carli();
+    system
+        .arg0("-carli")
+        .args(["-c", "/usr/bin/printenv SYSTEM_STARTUP_VALUE"])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .env("CARLI_SYSTEM_CONFIG", &system_config);
+    assert_eq!(system.output().unwrap().stdout, b"from-system\n");
 
     let mut continued = carli();
     continued
         .arg0("-carli")
         .args(["-c", "/usr/bin/printenv AFTER_ERROR"])
         .env("HOME", &home)
-        .env("XDG_CONFIG_HOME", &xdg);
+        .env("XDG_CONFIG_HOME", &xdg)
+        .env("CARLI_SYSTEM_CONFIG", &system_config);
     assert_eq!(
         String::from_utf8_lossy(&continued.output().unwrap().stdout).trim(),
         "loaded"
@@ -186,6 +204,7 @@ fn login_shell_supplies_a_default_path_when_path_is_unset() {
         .args(["-c", "which echo"])
         .env("HOME", directory.path())
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("CARLI_SYSTEM_CONFIG")
         .env_remove("PATH");
 
     let output = command.output().unwrap();

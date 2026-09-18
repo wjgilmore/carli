@@ -145,7 +145,11 @@ fn ensure_default_path() {
 }
 
 fn startup_paths() -> Vec<PathBuf> {
-    let mut paths = vec![PathBuf::from("/etc/carli/config")];
+    let system_path = std::env::var_os("CARLI_SYSTEM_CONFIG")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/etc/carli/config"));
+    let mut paths = vec![system_path];
     let user_path = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

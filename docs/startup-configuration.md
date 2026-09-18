@@ -17,6 +17,10 @@ Only one user path is selected. The user configuration runs after the system
 configuration and can therefore replace environment variables or other state
 established system-wide.
 
+`CARLI_SYSTEM_CONFIG` may override `/etc/carli/config` with another path. This
+supports nonstandard installation prefixes and allows the system layer to be
+tested without modifying `/etc`. An unset or empty value uses the default path.
+
 Missing files are normal and are skipped without an error. An unreadable file
 produces a diagnostic, but carli continues to the next startup file so a broken
 optional configuration does not make the shell completely inaccessible.

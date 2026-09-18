@@ -105,7 +105,20 @@ fn export_validates_names_and_reaches_child_processes() {
     assert!(output.status.success());
     assert_eq!(output.stdout, b"value\n");
 
-    for invalid in ["export", "export 2BAD=value", "export A=1 B=2"] {
+    let output = run_batch(
+        "export _CARLI_VALUE_2=first=part\nexport _CARLI_VALUE_2=updated\n/usr/bin/printenv _CARLI_VALUE_2\n",
+        directory.path(),
+    );
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"updated\n");
+
+    for invalid in [
+        "export",
+        "export =value",
+        "export 2BAD=value",
+        "export BAD-NAME=value",
+        "export A=1 B=2",
+    ] {
         let output = carli().args(["-c", invalid]).output().unwrap();
         assert_eq!(output.status.code(), Some(1), "command: {invalid}");
         assert!(!output.stderr.is_empty(), "command: {invalid}");
@@ -160,6 +173,21 @@ fn external_commands_use_path_wait_and_return_their_status() {
         .unwrap();
     assert_eq!(output.status.code(), Some(23));
     assert_eq!(output.stdout, b"custom-output");
+
+    let not_executable = directory.path().join("not-executable");
+    fs::write(&not_executable, "contents").unwrap();
+    let output = carli()
+        .args(["-c", "not-executable"])
+        .env("PATH", directory.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(126));
+
+    let output = carli()
+        .args(["-c", "sh -c \"kill -TERM $$\""])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(143));
 }
 
 #[test]
@@ -171,6 +199,19 @@ fn exit_covers_explicit_inherited_invalid_and_too_many_statuses() {
     assert_eq!(
         carli()
             .args(["-c", "exit invalid"])
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(2)
+    );
+    assert_eq!(
+        carli().args(["-c", "exit 255"]).status().unwrap().code(),
+        Some(255)
+    );
+    assert_eq!(
+        carli()
+            .args(["-c", "exit 256"])
             .output()
             .unwrap()
             .status
@@ -216,6 +257,19 @@ fn redirection_reports_missing_files_targets_duplicates_and_open_failures() {
     let invalid_output = format!("pwd > {}/missing/file", directory.path().display());
     let output = carli().args(["-c", &invalid_output]).output().unwrap();
     assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn quoted_redirection_paths_and_builtin_lookup_output_work() {
+    let directory = TestDirectory::new("quoted-redirection");
+    let output_path = directory.path().join("file with spaces.txt");
+    let command = format!("which pwd > \"{}\"", output_path.display());
+    let output = carli().args(["-c", &command]).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        fs::read_to_string(output_path).unwrap(),
+        "pwd: carli built-in\n"
+    );
 }
 
 #[test]

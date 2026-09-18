@@ -11,29 +11,32 @@ tests, and pseudo-terminal integration tests. The PTY test is launched by a
 Rust test wrapper and requires `python3`; it still runs as part of ordinary
 `cargo test`.
 
-## Coverage map
+## README coverage map
 
-The tests are organized by behavior rather than by implementation function:
+Every item listed under README "Completed" features maps to committed automated
+coverage:
 
-| Feature | Automated coverage |
+| Completed README feature | Automated coverage |
 | --- | --- |
-| Word splitting, quotes, escapes, and empty arguments | `src/lib.rs` unit tests |
-| `$NAME`, `${NAME}`, unset variables, and `$?` expansion | `src/lib.rs` unit tests |
-| Comments and literal special characters | `src/lib.rs` unit tests |
-| Redirection parsing and malformed syntax | `src/lib.rs` unit tests |
-| Real `<`, `>`, and `>>` file behavior | `tests/non_interactive.rs` |
-| Redirection file and syntax failures | `tests/builtins_and_failures.rs` |
-| External lookup through PATH, waiting, output, and statuses | `tests/builtins_and_failures.rs` |
-| `cd`, `pwd`, `export`, `which`, and `exit` success and errors | `tests/builtins_and_failures.rs` |
-| Blank input, EOF, parse errors, and command errors | `tests/builtins_and_failures.rs` |
-| `-c` output, status propagation, usage, and history isolation | `tests/non_interactive.rs` |
-| Batch state, EOF status, `cd`, and exported child environment | Both non-interactive integration files |
-| XDG and HOME startup files, precedence, errors, exit, and default PATH | Both non-interactive integration files |
-| Prompt placeholders and changes after `cd` | `tests/pty_features.py` |
-| Cursor editing and Ctrl-C at the prompt | `tests/pty_features.py` |
-| Persistent history save, load, and Up-arrow recall | `tests/pty_features.py` |
-| Foreground Ctrl-C and Ctrl-\\ statuses | `tests/pty_features.py` |
-| Ctrl-Z, multiple jobs, `jobs`, `bg`, `fg`, and job selection | `tests/pty_features.py` |
+| Interactive customizable prompt | Startup-configured and runtime-exported prompts, every placeholder, unknown placeholders, default prompt, and post-`cd` rebuilding in `tests/pty_features.py` |
+| Interactive line editing with history navigation | Left/Right editing plus Up/Down current-session and previous-session navigation in `tests/pty_features.py` |
+| Persistent `~/.carli_history` | Ctrl-D save, `exit` save, file contents, reload, and recall in `tests/pty_features.py`; automation isolation in `tests/non_interactive.rs` |
+| Whitespace-separated command parsing | `splits_words_on_whitespace` in `src/lib.rs` |
+| Single quotes, double quotes, and escapes | Quote, empty-argument, escaped-character, and literal-expansion unit tests in `src/lib.rs` |
+| External lookup through PATH | Custom executable lookup and missing/non-executable cases in `tests/builtins_and_failures.rs` |
+| External execution and waiting | Output plus statuses 23, 126, 127, and signal status 143 in integration tests |
+| Built-ins for state and lookup | Success, boundary, and error cases for `cd`, `pwd`, `export`, `which`, and `exit` in `tests/builtins_and_failures.rs` |
+| Exported child environment | Initial value, update, embedded `=`, valid/invalid names, and child inheritance in `tests/builtins_and_failures.rs` |
+| `$NAME` expansion | Unquoted, double-quoted, unset, empty, underscore/digit names, invalid starts, single-quoted, and escaped cases in `src/lib.rs` |
+| `${NAME}` expansion | Unquoted, double-quoted, single-quoted, invalid, and unclosed cases in `src/lib.rs` |
+| `$?` expansion | Parser quoting tests plus external, built-in, parse, Ctrl-C, Ctrl-\\, and startup statuses across integration tests |
+| `<`, `>`, and `>>` redirection | Parser syntax plus real input, truncate, append, quoted paths, built-in output, and all documented failures across both non-interactive integration files |
+| Foreground process groups and terminal signals | Prompt Ctrl-C, foreground Ctrl-C/Ctrl-\\, Ctrl-Z, shell survival, and terminal return in `tests/pty_features.py` |
+| `jobs`, `fg`, and `bg` | Stopped/running states, output redirection, percent/numeric/default selectors, multiple jobs, completion, and errors in `tests/pty_features.py` |
+| `-c` and batch input | Output, statuses, usage errors, state persistence, blank lines, EOF, history isolation, and last-status behavior across both non-interactive integration files |
+| XDG-aware startup configuration | XDG precedence, HOME fallback, interactive/login loading, automation isolation, comments, continued errors, startup status, `exit`, prompt configuration, and default PATH across integration and PTY tests |
+| Literal variables in single quotes or after escapes | Dedicated literal-expansion unit tests in `src/lib.rs` |
+| Graceful blank input, EOF, parse errors, and command errors | Unit parse errors plus batch blank/EOF statuses, interactive Ctrl-D, command-not-found, invalid invocation, and redirection failures in integration tests |
 
 ## Complete verification
 

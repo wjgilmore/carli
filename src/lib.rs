@@ -327,11 +327,16 @@ mod tests {
     fn expands_unquoted_variables() {
         unsafe {
             std::env::set_var("CARLI_TEST_HOME", "/example/home");
+            std::env::set_var("_CARLI_TEST_VALUE_2", "valid");
         }
 
         assert_eq!(
             parse_line("echo $CARLI_TEST_HOME/file").unwrap(),
             vec!["echo", "/example/home/file"]
+        );
+        assert_eq!(
+            parse_line("echo $_CARLI_TEST_VALUE_2").unwrap(),
+            vec!["echo", "valid"]
         );
     }
 
