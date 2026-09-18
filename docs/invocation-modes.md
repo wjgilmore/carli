@@ -71,7 +71,9 @@ load history, save history, or perform terminal job-control operations.
 
 Unix login programs commonly mark a login shell by placing a leading `-` on
 the executable name in `argv[0]`. Carli detects this form and loads its system
-and user startup files. Full login-shell behavior is still planned.
+and user startup files. Interactive login sessions also use persistent history,
+terminal process groups, terminal-mode restoration, and graceful `SIGHUP`
+cleanup. See [Safe login-shell installation](installation.md).
 
 ## SSH and system integration
 
@@ -83,9 +85,10 @@ carli -c 'requested command'
 ```
 
 Supporting this form prevents carli from opening an interactive prompt when a
-remote command expects ordinary stdout, stderr, and an exit status. Actual SSH
-login-shell deployment should still wait until carli's terminal recovery,
-installation tooling, and login tests are complete.
+remote command expects ordinary stdout, stderr, and an exit status. However,
+remote commands that depend on POSIX shell syntax such as pipelines, command
+separators, substitutions, or conditionals remain incompatible. Do not select
+carli for an account that relies on those SSH command forms.
 
 ## Current syntax limitations
 

@@ -1,6 +1,10 @@
 # carli Shell
 
-`carli` is a small Unix shell written in Rust as a learning project. It is not yet suitable for use as a login shell.
+`carli` is a small Unix shell written in Rust as a learning project. It includes
+the terminal recovery, disconnect cleanup, and reversible installation tooling
+needed for cautious local use as a login shell. It is not a Bash- or
+Zsh-compatible scripting shell; review the limitations before changing your
+account shell.
 
 ## Features
 
@@ -26,6 +30,8 @@
 - Basic job control with `jobs`, `fg`, and `bg`
 - Non-interactive execution with `-c` and line-oriented batch input
 - XDG-aware system and user startup configuration
+- Login-shell detection and graceful terminal-disconnect cleanup
+- Transactional installation and guarded uninstallation tooling
 - Literal variable text inside single quotes or after a backslash
 - Graceful handling of blank input, EOF, parse errors, and command errors
 
@@ -33,12 +39,12 @@
 
 - Pipelines
 - Human-friendly output formatting
-- Login-shell behavior
-- Safe installation, registration in `/etc/shells`, and use with `chsh`
 
-carli is not yet suitable for use as a login shell. Installation tooling and
-complete login-shell behavior should be completed before registering it with
-`chsh`.
+See [Safe login-shell installation](docs/installation.md) before registering
+carli in `/etc/shells` or using `chsh`. Keep an authenticated recovery terminal
+open until a separate login succeeds. Carli's missing pipelines, command
+separators, conditionals, and other scripting syntax can break SSH remote
+commands or scripts that assume a POSIX-compatible account shell.
 
 carli gives each interactive external command its own foreground process group.
 Terminal signals such as Ctrl-C and Ctrl-Z therefore affect the command rather

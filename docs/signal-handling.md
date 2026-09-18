@@ -112,3 +112,8 @@ are active.
 Correct signal handling is not merely a convenience feature. It is what allows
 an interactive shell to remain in control of the session while giving each
 foreground command temporary, predictable ownership of the terminal.
+
+Carli's implemented disconnect path catches `SIGHUP`, wakes blocked input or
+wait operations, saves history, and hangs up foreground, background, and stopped
+jobs before exiting with status 129. See [Hangup and session
+shutdown](hangup-shutdown.md).

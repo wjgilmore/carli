@@ -103,6 +103,11 @@ When carli exits, it sends `SIGHUP` and then `SIGCONT` to every remaining job
 process group. `SIGCONT` ensures that a stopped job can observe the hangup
 instead of remaining suspended after its shell disappears.
 
+Carli also catches `SIGHUP` delivered to the shell itself, including terminal
+disconnects. It wakes a blocked prompt or foreground wait, saves history, hangs
+up foreground, background, and stopped jobs, and exits with status `129`. See
+[Hangup and session shutdown](hangup-shutdown.md).
+
 ## Current limitations
 
 This is basic job control. The following features are not implemented yet:

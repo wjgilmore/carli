@@ -71,6 +71,20 @@ def exit_shell(pid, fd):
     return os.waitstatus_to_exitcode(raw_status)
 
 
+def wait_process_gone(process_id, description):
+    deadline = time.monotonic() + 3
+    while True:
+        try:
+            os.kill(process_id, 0)
+        except OSError as error:
+            if error.errno == errno.ESRCH:
+                return
+            raise
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{description} {process_id} survived shell cleanup")
+        time.sleep(0.05)
+
+
 def scenario_repeated_prompt_interrupts():
     pid, fd = start()
     read_until(fd)
@@ -156,17 +170,7 @@ def scenario_shell_hangs_up_stopped_jobs():
     with open(pid_file, encoding="utf-8") as child_pid_file:
         child_pid = int(child_pid_file.read())
     assert exit_shell(pid, fd) == 0
-    deadline = time.monotonic() + 3
-    while True:
-        try:
-            os.kill(child_pid, 0)
-        except OSError as error:
-            if error.errno == errno.ESRCH:
-                break
-            raise
-        if time.monotonic() >= deadline:
-            raise AssertionError(f"job {child_pid} survived shell exit")
-        time.sleep(0.05)
+    wait_process_gone(child_pid, "stopped job")
 
 
 def scenario_prompt_root_and_unknown_user():
@@ -400,17 +404,7 @@ def scenario_ctrl_d_hangs_up_stopped_job():
     os.write(fd, b"\x04")
     _, raw_status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(raw_status) == 148
-    deadline = time.monotonic() + 3
-    while True:
-        try:
-            os.kill(child_pid, 0)
-        except OSError as error:
-            if error.errno == errno.ESRCH:
-                break
-            raise
-        if time.monotonic() >= deadline:
-            raise AssertionError(f"job {child_pid} survived Ctrl-D shell exit")
-        time.sleep(0.05)
+    wait_process_gone(child_pid, "stopped job")
 
 
 def scenario_history_load_and_save_errors_are_nonfatal():
@@ -450,6 +444,73 @@ def scenario_blank_lines_are_not_saved_to_history():
     assert "/usr/bin/printf history-marker" in history
 
 
+def scenario_sighup_at_prompt_saves_history():
+    pid, fd = start()
+    read_until(fd)
+    send(fd, "/usr/bin/printf hangup-history-marker")
+    os.kill(pid, signal.SIGHUP)
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 129
+    with open(os.path.join(HOME, ".carli_history"), encoding="utf-8") as history_file:
+        assert "/usr/bin/printf hangup-history-marker" in history_file.read()
+
+
+def scenario_sighup_cleans_stopped_job():
+    pid_file = os.path.join(HOME, "sighup-stopped.pid")
+    pid, fd = start()
+    read_until(fd)
+    stop_command(fd, f"sh -c 'echo $$ > {pid_file}; sleep 30'")
+    with open(pid_file, encoding="utf-8") as child_pid_file:
+        child_pid = int(child_pid_file.read())
+    os.kill(pid, signal.SIGHUP)
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 129
+    wait_process_gone(child_pid, "stopped job")
+
+
+def scenario_sighup_cleans_background_job():
+    pid_file = os.path.join(HOME, "sighup-background.pid")
+    pid, fd = start()
+    read_until(fd)
+    stop_command(fd, f"sh -c 'echo $$ > {pid_file}; sleep 30'")
+    with open(pid_file, encoding="utf-8") as child_pid_file:
+        child_pid = int(child_pid_file.read())
+    send(fd, "bg")
+    os.kill(pid, signal.SIGHUP)
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 129
+    wait_process_gone(child_pid, "background job")
+
+
+def scenario_sighup_cleans_foreground_job():
+    pid_file = os.path.join(HOME, "sighup-foreground.pid")
+    pid, fd = start()
+    read_until(fd)
+    os.write(fd, f"sh -c 'echo $$ > {pid_file}; sleep 30'\r".encode())
+    deadline = time.monotonic() + 3
+    while not os.path.exists(pid_file):
+        if time.monotonic() >= deadline:
+            raise AssertionError("foreground job did not write its pid")
+        time.sleep(0.02)
+    with open(pid_file, encoding="utf-8") as child_pid_file:
+        child_pid = int(child_pid_file.read())
+    os.kill(pid, signal.SIGHUP)
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 129
+    wait_process_gone(child_pid, "foreground job")
+
+
+def scenario_real_pty_disconnect_saves_history():
+    pid, fd = start()
+    read_until(fd)
+    send(fd, "/usr/bin/printf disconnect-history-marker")
+    os.close(fd)
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 129
+    with open(os.path.join(HOME, ".carli_history"), encoding="utf-8") as history_file:
+        assert "/usr/bin/printf disconnect-history-marker" in history_file.read()
+
+
 SCENARIOS = {
     "repeated_prompt_interrupts": scenario_repeated_prompt_interrupts,
     "job_selection_errors": scenario_job_selection_errors,
@@ -471,6 +532,11 @@ SCENARIOS = {
     "ctrl_d_hangs_up_stopped_job": scenario_ctrl_d_hangs_up_stopped_job,
     "history_load_and_save_errors_are_nonfatal": scenario_history_load_and_save_errors_are_nonfatal,
     "blank_lines_are_not_saved_to_history": scenario_blank_lines_are_not_saved_to_history,
+    "sighup_at_prompt_saves_history": scenario_sighup_at_prompt_saves_history,
+    "sighup_cleans_stopped_job": scenario_sighup_cleans_stopped_job,
+    "sighup_cleans_background_job": scenario_sighup_cleans_background_job,
+    "sighup_cleans_foreground_job": scenario_sighup_cleans_foreground_job,
+    "real_pty_disconnect_saves_history": scenario_real_pty_disconnect_saves_history,
 }
 
 try:

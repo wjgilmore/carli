@@ -1,5 +1,6 @@
 use nix::errno::Errno;
-use nix::sys::signal::{self, SigHandler, Signal, killpg};
+use nix::libc;
+use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet, Signal, killpg};
 use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
 use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::{Pid, getpgrp, getpid, setpgid, tcgetpgrp, tcsetpgrp};
@@ -12,8 +13,21 @@ use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use carli::{OutputRedirection, ParseError, parse_command_line_with_status};
+
+static HANGUP_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn request_hangup(_: i32) {
+    HANGUP_REQUESTED.store(true, Ordering::Relaxed);
+    // rustyline temporarily owns SIGINT while blocked in terminal input.
+    // Raising it wakes readline so the main loop can observe the hangup flag.
+    // libc::raise is async-signal-safe on POSIX systems.
+    unsafe {
+        libc::raise(libc::SIGINT);
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum JobState {
@@ -223,13 +237,20 @@ fn run_interactive(job_control: &mut JobControl, initial_status: i32) -> u8 {
 
     let mut last_status = initial_status;
     let exit_status = loop {
+        if HANGUP_REQUESTED.load(Ordering::Relaxed) {
+            break 129;
+        }
         reap_jobs(&mut job_control.jobs);
         let prompt = build_prompt();
 
         let line = match editor.readline(&prompt) {
+            Ok(_line) if HANGUP_REQUESTED.load(Ordering::Relaxed) => break 129,
             Ok(line) => line,
 
             Err(ReadlineError::Interrupted) => {
+                if HANGUP_REQUESTED.load(Ordering::Relaxed) {
+                    break 129;
+                }
                 // Ctrl-C cancels the current input.
                 last_status = 130;
                 continue;
@@ -242,6 +263,9 @@ fn run_interactive(job_control: &mut JobControl, initial_status: i32) -> u8 {
             }
 
             Err(error) => {
+                if HANGUP_REQUESTED.load(Ordering::Relaxed) {
+                    break 129;
+                }
                 eprintln!("carli: could not read input: {error}");
                 break 1;
             }
@@ -729,7 +753,7 @@ fn run_external(
         unsafe {
             command.pre_exec(|| {
                 setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(errno_to_io)?;
-                for signal in foreground_signals() {
+                for signal in child_signals() {
                     signal::signal(signal, SigHandler::SigDfl).map_err(errno_to_io)?;
                 }
                 Ok(())
@@ -827,6 +851,18 @@ fn setup_interactive_shell() -> io::Result<(Pid, Termios)> {
         }
     }
 
+    let hangup_action = SigAction::new(
+        SigHandler::Handler(request_hangup),
+        SaFlags::empty(),
+        SigSet::empty(),
+    );
+    // SAFETY: The handler only uses a lock-free atomic and async-signal-safe
+    // raise. Omitting SA_RESTART ensures blocking terminal reads and waits
+    // return to code that can perform orderly history and job cleanup.
+    unsafe {
+        signal::sigaction(Signal::SIGHUP, &hangup_action).map_err(errno_to_io)?;
+    }
+
     let pid = getpid();
     match setpgid(pid, pid) {
         Ok(()) | Err(Errno::EPERM) | Err(Errno::EACCES) => {}
@@ -862,6 +898,17 @@ fn foreground_signals() -> [Signal; 5] {
     ]
 }
 
+fn child_signals() -> [Signal; 6] {
+    [
+        Signal::SIGINT,
+        Signal::SIGQUIT,
+        Signal::SIGTSTP,
+        Signal::SIGTTIN,
+        Signal::SIGTTOU,
+        Signal::SIGHUP,
+    ]
+}
+
 fn wait_for_foreground_job(mut job: Job, jobs: &mut Vec<Job>, next_job_id: &mut usize) -> i32 {
     loop {
         match waitpid(job.pid, Some(WaitPidFlag::WUNTRACED)) {
@@ -892,7 +939,11 @@ fn wait_for_foreground_job(mut job: Job, jobs: &mut Vec<Job>, next_job_id: &mut 
                 | WaitStatus::PtraceSyscall(_)
                 | WaitStatus::StillAlive,
             ) => {}
-            Err(Errno::EINTR) => {}
+            Err(Errno::EINTR) => {
+                if HANGUP_REQUESTED.load(Ordering::Relaxed) {
+                    hang_up_job(&job);
+                }
+            }
             Err(error) => {
                 eprintln!("carli: could not wait for {}: {error}", job.command);
                 return 1;
@@ -935,9 +986,13 @@ fn reap_jobs(jobs: &mut Vec<Job>) {
 
 fn hang_up_jobs(jobs: &[Job]) {
     for job in jobs {
-        let _ = killpg(job.process_group, Signal::SIGHUP);
-        let _ = killpg(job.process_group, Signal::SIGCONT);
+        hang_up_job(job);
     }
+}
+
+fn hang_up_job(job: &Job) {
+    let _ = killpg(job.process_group, Signal::SIGHUP);
+    let _ = killpg(job.process_group, Signal::SIGCONT);
 }
 
 fn exit_status_from_process(status: std::process::ExitStatus) -> i32 {
@@ -1023,6 +1078,21 @@ mod tests {
                 Signal::SIGTSTP,
                 Signal::SIGTTIN,
                 Signal::SIGTTOU,
+            ]
+        );
+    }
+
+    #[test]
+    fn children_restore_hangup_alongside_terminal_signals() {
+        assert_eq!(
+            child_signals(),
+            [
+                Signal::SIGINT,
+                Signal::SIGQUIT,
+                Signal::SIGTSTP,
+                Signal::SIGTTIN,
+                Signal::SIGTTOU,
+                Signal::SIGHUP,
             ]
         );
     }

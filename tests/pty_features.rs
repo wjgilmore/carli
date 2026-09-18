@@ -142,3 +142,31 @@ fn blank_lines_are_excluded_from_history() {
         Some("blank_lines_are_not_saved_to_history"),
     );
 }
+
+#[test]
+fn sighup_at_prompt_saves_history_and_exits_129() {
+    run_pty_scenario("pty_edge_cases.py", Some("sighup_at_prompt_saves_history"));
+}
+
+#[test]
+fn sighup_cleans_up_stopped_jobs() {
+    run_pty_scenario("pty_edge_cases.py", Some("sighup_cleans_stopped_job"));
+}
+
+#[test]
+fn sighup_cleans_up_background_jobs() {
+    run_pty_scenario("pty_edge_cases.py", Some("sighup_cleans_background_job"));
+}
+
+#[test]
+fn sighup_cleans_up_foreground_jobs() {
+    run_pty_scenario("pty_edge_cases.py", Some("sighup_cleans_foreground_job"));
+}
+
+#[test]
+fn real_terminal_disconnect_saves_history_and_exits_129() {
+    run_pty_scenario(
+        "pty_edge_cases.py",
+        Some("real_pty_disconnect_saves_history"),
+    );
+}
