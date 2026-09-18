@@ -79,11 +79,24 @@ fn main() -> std::process::ExitCode {
         next_job_id: 1,
     };
 
-    let _login_shell = invocation.login_shell;
+    let startup_outcome = if interactive || invocation.login_shell {
+        ensure_default_path();
+        load_startup_files(&mut job_control)
+    } else {
+        CommandOutcome::Status(0)
+    };
+    let initial_status = match startup_outcome {
+        CommandOutcome::Status(status) => status,
+        CommandOutcome::Exit(status) => {
+            hang_up_jobs(&job_control.jobs);
+            return std::process::ExitCode::from(status);
+        }
+    };
+
     let exit_status = match invocation.command {
-        Some(command) => outcome_status(execute_line(&command, 0, &mut job_control)),
-        None if interactive => run_interactive(&mut job_control),
-        None => run_batch(&mut job_control),
+        Some(command) => outcome_status(execute_line(&command, initial_status, &mut job_control)),
+        None if interactive => run_interactive(&mut job_control, initial_status),
+        None => run_batch(&mut job_control, initial_status),
     };
 
     hang_up_jobs(&job_control.jobs);
@@ -121,7 +134,75 @@ fn parse_invocation() -> Result<Invocation, String> {
     })
 }
 
-fn run_interactive(job_control: &mut JobControl) -> u8 {
+fn ensure_default_path() {
+    if std::env::var_os("PATH").is_none() {
+        // SAFETY: carli is single-threaded and performs startup initialization
+        // before spawning commands.
+        unsafe {
+            std::env::set_var("PATH", "/usr/local/bin:/usr/bin:/bin");
+        }
+    }
+}
+
+fn startup_paths() -> Vec<PathBuf> {
+    let mut paths = vec![PathBuf::from("/etc/carli/config")];
+    let user_path = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|directory| directory.join("carli/config"))
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".config/carli/config"))
+        });
+    if let Some(path) = user_path {
+        paths.push(path);
+    }
+    paths
+}
+
+fn load_startup_files(job_control: &mut JobControl) -> CommandOutcome {
+    let mut last_status = 0;
+
+    for path in startup_paths() {
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                eprintln!(
+                    "carli: {}: could not read startup file: {error}",
+                    path.display()
+                );
+                last_status = 1;
+                continue;
+            }
+        };
+
+        for (index, line) in io::BufReader::new(file).lines().enumerate() {
+            let line_number = index + 1;
+            let line = match line {
+                Ok(line) => line,
+                Err(error) => {
+                    eprintln!(
+                        "carli: {}:{line_number}: could not read startup file: {error}",
+                        path.display()
+                    );
+                    last_status = 1;
+                    break;
+                }
+            };
+
+            match execute_line_from(&line, last_status, job_control, Some((&path, line_number))) {
+                CommandOutcome::Status(status) => last_status = status,
+                CommandOutcome::Exit(status) => return CommandOutcome::Exit(status),
+            }
+        }
+    }
+
+    CommandOutcome::Status(last_status)
+}
+
+fn run_interactive(job_control: &mut JobControl, initial_status: i32) -> u8 {
     let mut editor = DefaultEditor::new().expect("carli: could not initialize line editor");
     let history_path = history_path();
 
@@ -132,7 +213,7 @@ fn run_interactive(job_control: &mut JobControl) -> u8 {
         eprintln!("carli: could not load history: {error}");
     }
 
-    let mut last_status = 0;
+    let mut last_status = initial_status;
     let exit_status = loop {
         reap_jobs(&mut job_control.jobs);
         let prompt = build_prompt();
@@ -179,9 +260,9 @@ fn run_interactive(job_control: &mut JobControl) -> u8 {
     exit_status
 }
 
-fn run_batch(job_control: &mut JobControl) -> u8 {
+fn run_batch(job_control: &mut JobControl, initial_status: i32) -> u8 {
     let stdin = io::stdin();
-    let mut last_status = 0;
+    let mut last_status = initial_status;
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -212,10 +293,24 @@ fn report_parse_error(error: ParseError) {
 }
 
 fn execute_line(line: &str, last_status: i32, job_control: &mut JobControl) -> CommandOutcome {
+    execute_line_from(line, last_status, job_control, None)
+}
+
+fn execute_line_from(
+    line: &str,
+    last_status: i32,
+    job_control: &mut JobControl,
+    source: Option<(&std::path::Path, usize)>,
+) -> CommandOutcome {
     let parsed = match parse_command_line_with_status(line, last_status) {
         Ok(parsed) => parsed,
         Err(error) => {
-            report_parse_error(error);
+            match source {
+                Some((path, line_number)) => {
+                    eprintln!("carli: {}:{line_number}: {error}", path.display())
+                }
+                None => report_parse_error(error),
+            }
             return CommandOutcome::Status(2);
         }
     };

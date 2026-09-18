@@ -70,9 +70,8 @@ load history, save history, or perform terminal job-control operations.
 ## Login-shell detection
 
 Unix login programs commonly mark a login shell by placing a leading `-` on
-the executable name in `argv[0]`. Carli detects and records this form so future
-startup-configuration support can select login-specific files. Detection does
-not yet load any startup file, and full login-shell behavior remains planned.
+the executable name in `argv[0]`. Carli detects this form and loads its system
+and user startup files. Full login-shell behavior is still planned.
 
 ## SSH and system integration
 
@@ -85,8 +84,8 @@ carli -c 'requested command'
 
 Supporting this form prevents carli from opening an interactive prompt when a
 remote command expects ordinary stdout, stderr, and an exit status. Actual SSH
-login-shell deployment should still wait until carli's startup configuration,
-terminal recovery, installation tooling, and login tests are complete.
+login-shell deployment should still wait until carli's terminal recovery,
+installation tooling, and login tests are complete.
 
 ## Current syntax limitations
 

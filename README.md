@@ -24,6 +24,7 @@
 - Foreground process groups and terminal signal handling
 - Basic job control with `jobs`, `fg`, and `bg`
 - Non-interactive execution with `-c` and line-oriented batch input
+- XDG-aware system and user startup configuration
 - Literal variable text inside single quotes or after a backslash
 - Graceful handling of blank input, EOF, parse errors, and command errors
 
@@ -31,13 +32,12 @@
 
 - Pipelines
 - Human-friendly output formatting
-- Startup configuration files
 - Login-shell behavior
 - Safe installation, registration in `/etc/shells`, and use with `chsh`
 
-carli is not yet suitable for use as a login shell. Terminal recovery, startup
-configuration, and login-shell behavior should be completed before registering
-it with `chsh`.
+carli is not yet suitable for use as a login shell. Terminal recovery,
+installation tooling, and complete login-shell behavior should be completed
+before registering it with `chsh`.
 
 carli gives each interactive external command its own foreground process group.
 Terminal signals such as Ctrl-C and Ctrl-Z therefore affect the command rather
@@ -174,9 +174,10 @@ carli rebuilds the prompt before reading each command, so `{cwd}` and `{dir}`
 change immediately after `cd`. Unknown placeholders remain unchanged. When
 `CARLI_PROMPT` is not set, carli uses its default prompt.
 
-Prompt customization does not yet persist after carli exits because startup
-configuration files are still planned. The prompt can also be configured for a
-single session when starting carli from another shell:
+Prompt customization can be made persistent by placing the corresponding
+`export` command in carli's user startup file. See [Startup
+configuration](docs/startup-configuration.md). The prompt can also be configured
+for a single session when starting carli from another shell:
 
 ```sh
 CARLI_PROMPT='{user}:{dir}$ ' cargo run

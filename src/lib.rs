@@ -178,6 +178,7 @@ pub fn parse_command_line_with_status(
                     word_started = false;
                 }
             }
+            (Quote::None, '#') if !word_started => break,
             (Quote::None, '<') => {
                 if word_started {
                     tokens.push(Token::Word(std::mem::take(&mut word)));
@@ -291,6 +292,22 @@ mod tests {
         assert_eq!(
             parse_line("echo one\\ two \\\"three\\\"").unwrap(),
             vec!["echo", "one two", "\"three\""]
+        );
+    }
+
+    #[test]
+    fn supports_shell_comments() {
+        assert_eq!(
+            parse_line("echo hello # ignored text").unwrap(),
+            vec!["echo", "hello"]
+        );
+        assert_eq!(
+            parse_line("# a complete comment").unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            parse_line("echo value#suffix '#' \\#").unwrap(),
+            vec!["echo", "value#suffix", "#", "#"]
         );
     }
 
