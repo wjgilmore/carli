@@ -20,12 +20,12 @@
   digits, or underscores
 - Braced environment-variable expansion with `${NAME}`
 - Previous-command status expansion with `$?`
+- Input redirection with `<` and output redirection with `>` and `>>`
 - Literal variable text inside single quotes or after a backslash
 - Graceful handling of blank input, EOF, parse errors, and command errors
 
 ### Planned
 
-- Input and output redirection
 - Pipelines
 - Human-friendly output formatting
 - Signal handling
@@ -99,6 +99,17 @@ carli currently provides these built-in commands:
 Commands that are not built-ins are treated as external programs. For example,
 `ls -al`, `cargo test`, and `printenv HOME` are located through `PATH` and run as
 child processes.
+
+carli supports redirecting standard input and standard output:
+
+```sh
+sort < unsorted.txt > sorted.txt
+echo "another line" >> notes.txt
+pwd > current-directory.txt
+```
+
+See [Input and output redirection](docs/redirection.md) for syntax, behavior,
+and current limitations.
 
 ## Line editing and history
 
