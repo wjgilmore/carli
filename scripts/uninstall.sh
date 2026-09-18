@@ -53,6 +53,14 @@ destination=$destination_directory/$(basename "$destination")
 shells_file=$shells_directory/$(basename "$shells_file")
 passwd_file=$passwd_directory/$(basename "$passwd_file")
 
+if [ "$remove_binary" -eq 1 ]; then
+    [ ! -L "$destination" ] || { echo "carli uninstall: refusing to remove symlinked destination: $destination" >&2; exit 1; }
+    if [ -e "$destination" ] && [ ! -f "$destination" ]; then
+        echo "carli uninstall: refusing to remove non-regular destination: $destination" >&2
+        exit 1
+    fi
+fi
+
 if awk -F: -v shell="$destination" '$7 == shell { found = 1 } END { exit !found }' "$passwd_file"; then
     echo "carli uninstall: $destination is still assigned to at least one account; change those accounts first" >&2
     exit 1
@@ -76,11 +84,6 @@ awk -v shell="$destination" '$0 != shell { print }' "$shells_file" > "$staged_sh
 mv -f -- "$staged_shells" "$shells_file"
 
 if [ "$remove_binary" -eq 1 ]; then
-    [ ! -L "$destination" ] || { echo "carli uninstall: refusing to remove symlinked destination: $destination" >&2; exit 1; }
-    if [ -e "$destination" ] && [ ! -f "$destination" ]; then
-        echo "carli uninstall: refusing to remove non-regular destination: $destination" >&2
-        exit 1
-    fi
     rm -f -- "$destination"
     echo "Unregistered and removed $destination"
 else

@@ -99,7 +99,10 @@ sudo ./scripts/uninstall.sh --remove-binary
 The uninstall script checks `/etc/passwd` and refuses to unregister or remove
 carli while any account still names that exact path. By default it only removes
 the `/etc/shells` entry, leaving the executable available as an additional
-recovery safeguard. Repeated install and uninstall operations are idempotent.
+recovery safeguard. With `--remove-binary`, it validates that the destination is
+a regular non-symlink before changing `/etc/shells`, so an unsafe removal target
+leaves both the registry and filesystem untouched. Repeated install and
+uninstall operations are idempotent.
 
 ## Custom paths
 

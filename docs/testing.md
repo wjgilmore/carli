@@ -41,7 +41,7 @@ coverage:
 | Terminal-mode preservation | Exact termios snapshots, normal exit, signal termination, repeated stops, `bg`→`fg`, shell recovery, and job-mode restoration in isolated `tests/pty_edge_cases.py` scenarios |
 | `jobs`, `fg`, and `bg` | Stopped/running states, output success/failure, percent/numeric/default selectors, multiple jobs, repeated lifecycle transitions, completion, and errors in PTY tests |
 | Login disconnect and cleanup | `SIGHUP` at the prompt and during foreground, background, and stopped jobs; history persistence; child cleanup; and status 129 in PTY tests |
-| Installation and rollback | Atomic copy/registration, idempotence, validation, transaction rollback, account-assignment protection, unregister, and optional removal in `tests/installation.rs` |
+| Installation and rollback | CLI validation, smoke-test failures, canonical and whitespace paths, missing newlines, metadata preservation, symlink and non-regular refusal, idempotence, both transaction rollback branches, exact account-assignment protection, unregister, and optional removal in `tests/installation.rs` |
 | `-c` and batch input | Output, statuses, usage errors, state persistence, blank lines, EOF, history isolation, and last-status behavior across both non-interactive integration files |
 | XDG-aware startup configuration | XDG precedence, HOME fallback, interactive/login loading, automation isolation, comments, continued errors, startup status, `exit`, prompt configuration, and default PATH across integration and PTY tests |
 | Literal variables in single quotes or after escapes | Dedicated literal-expansion unit tests in `src/lib.rs` |
