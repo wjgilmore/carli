@@ -19,12 +19,12 @@
   using names that begin with a letter or underscore and continue with letters,
   digits, or underscores
 - Braced environment-variable expansion with `${NAME}`
+- Previous-command status expansion with `$?`
 - Literal variable text inside single quotes or after a backslash
 - Graceful handling of blank input, EOF, parse errors, and command errors
 
 ### Planned
 
-- Previous-command status expansion with `$?`
 - Input and output redirection
 - Pipelines
 - Human-friendly output formatting

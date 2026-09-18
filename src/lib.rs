@@ -40,7 +40,13 @@ fn is_valid_variable_name(name: &str) -> bool {
 fn expand_variable(
     characters: &mut Peekable<Chars<'_>>,
     output: &mut String,
+    previous_status: i32,
 ) -> Result<(), ParseError> {
+    if characters.next_if_eq(&'?').is_some() {
+        output.push_str(&previous_status.to_string());
+        return Ok(());
+    }
+
     if characters.next_if_eq(&'{').is_some() {
         let mut name = String::new();
         let mut closed = false;
@@ -95,6 +101,10 @@ fn expand_variable(
 }
 
 pub fn parse_line(line: &str) -> Result<Vec<String>, ParseError> {
+    parse_line_with_status(line, 0)
+}
+
+pub fn parse_line_with_status(line: &str, previous_status: i32) -> Result<Vec<String>, ParseError> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut quote = Quote::None;
@@ -125,7 +135,7 @@ pub fn parse_line(line: &str) -> Result<Vec<String>, ParseError> {
                 }
             }
             (Quote::None | Quote::Double, '$') => {
-                expand_variable(&mut characters, &mut word)?;
+                expand_variable(&mut characters, &mut word, previous_status)?;
                 word_started = true;
             }
             (_, character) => {
@@ -267,6 +277,26 @@ mod tests {
         assert_eq!(
             parse_line("echo '${CARLI_TEST_BRACED_USER}'").unwrap(),
             vec!["echo", "${CARLI_TEST_BRACED_USER}"]
+        );
+    }
+
+    #[test]
+    fn expands_previous_command_status() {
+        assert_eq!(
+            parse_line_with_status("echo $? status=$?", 127).unwrap(),
+            vec!["echo", "127", "status=127"]
+        );
+        assert_eq!(
+            parse_line_with_status("echo \"status: $?\"", 2).unwrap(),
+            vec!["echo", "status: 2"]
+        );
+    }
+
+    #[test]
+    fn preserves_literal_previous_command_status() {
+        assert_eq!(
+            parse_line_with_status("echo '$?' \\$?", 1).unwrap(),
+            vec!["echo", "$?", "$?"]
         );
     }
 }

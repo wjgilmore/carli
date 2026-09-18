@@ -1,10 +1,11 @@
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use std::io;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::Command;
 
-use carli::{ParseError, parse_line};
+use carli::{ParseError, parse_line_with_status};
 
 fn history_path() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -24,6 +25,8 @@ fn main() -> std::process::ExitCode {
         eprintln!("carli: could not load history: {error}");
     }
 
+    let mut last_status = 0;
+
     let exit_status = loop {
         let prompt = build_prompt();
 
@@ -32,6 +35,7 @@ fn main() -> std::process::ExitCode {
 
             Err(ReadlineError::Interrupted) => {
                 // Ctrl-C cancels the current input.
+                last_status = 130;
                 continue;
             }
 
@@ -53,10 +57,11 @@ fn main() -> std::process::ExitCode {
             eprintln!("carli: could not add history entry: {error}");
         }
 
-        let words = match parse_line(&line) {
+        let words = match parse_line_with_status(&line, last_status) {
             Ok(words) => words,
             Err(error) => {
                 report_parse_error(error);
+                last_status = 2;
                 continue;
             }
         };
@@ -65,16 +70,17 @@ fn main() -> std::process::ExitCode {
         }
 
         match words[0].as_str() {
-            "cd" => change_directory(&words[1..]),
-            "exit" => {
-                if let Some(status) = exit_status(&words[1..]) {
-                    break status;
+            "cd" => last_status = change_directory(&words[1..]),
+            "exit" => match exit_status(&words[1..]) {
+                Ok(status) => break status,
+                Err(status) => {
+                    last_status = status;
                 }
-            }
-            "export" => export_variable(&words[1..]),
-            "pwd" => print_working_directory(&words[1..]),
-            "which" => which(&words[1..]),
-            program => run_external(program, &words[1..]),
+            },
+            "export" => last_status = export_variable(&words[1..]),
+            "pwd" => last_status = print_working_directory(&words[1..]),
+            "which" => last_status = which(&words[1..]),
+            program => last_status = run_external(program, &words[1..]),
         }
     };
 
@@ -95,22 +101,22 @@ fn report_parse_error(error: ParseError) {
     eprintln!("carli: {error}");
 }
 
-fn export_variable(arguments: &[String]) {
+fn export_variable(arguments: &[String]) -> i32 {
     if arguments.len() != 1 {
         eprintln!("carli: usage: export NAME=VALUE");
-        return;
+        return 1;
     }
 
     let assignment = &arguments[0];
 
     let Some((name, value)) = assignment.split_once('=') else {
         eprintln!("carli: export: expected NAME=VALUE");
-        return;
+        return 1;
     };
 
     if !is_valid_variable_name(name) {
         eprintln!("carli: export: `{name}` is not a valid variable name");
-        return;
+        return 1;
     }
 
     // TODO: carli is currently single-threaded, so no other
@@ -119,6 +125,8 @@ fn export_variable(arguments: &[String]) {
     unsafe {
         std::env::set_var(name, value);
     }
+
+    0
 }
 
 fn is_valid_variable_name(name: &str) -> bool {
@@ -135,45 +143,46 @@ fn is_valid_variable_name(name: &str) -> bool {
     characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
-fn which(arguments: &[String]) {
+fn which(arguments: &[String]) -> i32 {
     if arguments.is_empty() {
         eprintln!("carli: which: not enough arguments");
-        return;
+        return 1;
     }
 
     if arguments.len() > 1 {
         eprintln!("carli: which: too many arguments");
-        return;
+        return 1;
     }
 
     let command_name = &arguments[0];
 
     if is_builtin(command_name) {
         println!("{command_name}: carli built-in");
-        return;
+        return 0;
     }
 
     let Some(path) = std::env::var_os("PATH") else {
         eprintln!("carli: which: PATH is not set");
-        return;
+        return 1;
     };
 
     for directory in std::env::split_paths(&path) {
         let candidate = directory.join(command_name);
         if candidate.is_file() {
             println!("{}", candidate.display());
-            return;
+            return 0;
         }
     }
 
     eprintln!("carli: which: {command_name} not found");
+    1
 }
 
-fn change_directory(arguments: &[String]) {
+fn change_directory(arguments: &[String]) -> i32 {
     if arguments.len() > 1 {
         eprintln!("carli: cd: too many arguments");
         eprintln!("carli: try cd <name_of_directory>");
-        return;
+        return 1;
     }
     let destination = arguments
         .first()
@@ -181,39 +190,48 @@ fn change_directory(arguments: &[String]) {
         .or_else(|| std::env::var("HOME").ok());
     let Some(destination) = destination else {
         eprintln!("carli: cd: HOME is not set");
-        return;
+        return 1;
     };
     if let Err(error) = std::env::set_current_dir(&destination) {
         eprintln!("carli: cd: {destination}: {error}");
+        return 1;
     }
+
+    0
 }
 
-fn print_working_directory(arguments: &[String]) {
+fn print_working_directory(arguments: &[String]) -> i32 {
     if !arguments.is_empty() {
         eprintln!("carli: pwd: too many arguments");
-        return;
+        return 1;
     }
     match std::env::current_dir() {
-        Ok(path) => println!("{}", path.display()),
-        Err(error) => eprintln!("carli: pwd: {error}"),
+        Ok(path) => {
+            println!("{}", path.display());
+            0
+        }
+        Err(error) => {
+            eprintln!("carli: pwd: {error}");
+            1
+        }
     }
 }
 
-fn exit_status(arguments: &[String]) -> Option<u8> {
+fn exit_status(arguments: &[String]) -> Result<u8, i32> {
     if arguments.len() > 1 {
         eprintln!("carli: exit: too many arguments");
-        return None;
+        return Err(1);
     }
 
     match arguments.first() {
         Some(value) => match value.parse::<u8>() {
-            Ok(status) => Some(status),
+            Ok(status) => Ok(status),
             Err(_) => {
                 eprintln!("carli: exit: {value}: numeric argument required");
-                Some(2)
+                Ok(2)
             }
         },
-        None => Some(0),
+        None => Ok(0),
     }
 }
 
@@ -238,12 +256,19 @@ fn build_prompt() -> String {
         .replace("{shell}", "carli")
 }
 
-fn run_external(program: &str, arguments: &[String]) {
+fn run_external(program: &str, arguments: &[String]) -> i32 {
     match Command::new(program).args(arguments).status() {
-        Ok(_) => {}
+        Ok(status) => status
+            .code()
+            .or_else(|| status.signal().map(|signal| 128 + signal))
+            .unwrap_or(1),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            eprintln!("carli: {program}: command not found")
+            eprintln!("carli: {program}: command not found");
+            127
         }
-        Err(error) => eprintln!("carli: {program}: {error}"),
+        Err(error) => {
+            eprintln!("carli: {program}: {error}");
+            126
+        }
     }
 }
