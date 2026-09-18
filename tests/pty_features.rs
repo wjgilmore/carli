@@ -82,3 +82,63 @@ fn terminal_modes_are_restored_after_signal_termination() {
 fn stopped_job_modes_are_preserved_across_fg() {
     run_pty_scenario("pty_edge_cases.py", Some("terminal_modes_stop_resume"));
 }
+
+#[test]
+fn complete_termios_snapshot_is_restored() {
+    run_pty_scenario(
+        "pty_edge_cases.py",
+        Some("complete_termios_snapshot_restored"),
+    );
+}
+
+#[test]
+fn latest_terminal_modes_survive_repeated_stop_resume_cycles() {
+    run_pty_scenario(
+        "pty_edge_cases.py",
+        Some("terminal_modes_repeated_stop_resume"),
+    );
+}
+
+#[test]
+fn stopped_job_modes_survive_bg_then_fg() {
+    run_pty_scenario("pty_edge_cases.py", Some("terminal_modes_bg_then_fg"));
+}
+
+#[test]
+fn interactive_errors_leave_terminal_usable() {
+    run_pty_scenario(
+        "pty_edge_cases.py",
+        Some("interactive_errors_preserve_terminal"),
+    );
+}
+
+#[test]
+fn failed_fg_output_keeps_stopped_job_recoverable() {
+    run_pty_scenario("pty_edge_cases.py", Some("fg_output_failure_retains_job"));
+}
+
+#[test]
+fn ctrl_d_returns_the_previous_status() {
+    run_pty_scenario("pty_edge_cases.py", Some("ctrl_d_preserves_last_status"));
+}
+
+#[test]
+fn ctrl_d_hangs_up_stopped_jobs() {
+    run_pty_scenario("pty_edge_cases.py", Some("ctrl_d_hangs_up_stopped_job"));
+}
+
+#[test]
+fn history_io_errors_do_not_break_interactive_shell() {
+    run_pty_scenario(
+        "pty_edge_cases.py",
+        Some("history_load_and_save_errors_are_nonfatal"),
+    );
+}
+
+#[test]
+fn blank_lines_are_excluded_from_history() {
+    run_pty_scenario(
+        "pty_edge_cases.py",
+        Some("blank_lines_are_not_saved_to_history"),
+    );
+}

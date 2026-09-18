@@ -271,6 +271,185 @@ def scenario_terminal_modes_stop_resume():
     assert exit_shell(pid, fd) == 0
 
 
+def scenario_complete_termios_snapshot_restored():
+    before = os.path.join(HOME, "termios-before")
+    after = os.path.join(HOME, "termios-after")
+    pid, fd = start()
+    read_until(fd)
+    send(
+        fd,
+        f"/usr/bin/python3 -c 'import termios; open(\"{before}\",\"w\").write(repr(termios.tcgetattr(0)))'",
+    )
+    command = (
+        "/usr/bin/python3 -c 'import os,termios; a=termios.tcgetattr(0); "
+        "a[0]^=termios.ICRNL|termios.IXON; a[1]^=termios.OPOST; "
+        "a[3]^=termios.ECHO|termios.ICANON|termios.IEXTEN; "
+        "a[6][termios.VEOF]=b\"x\"; termios.tcsetattr(0,termios.TCSANOW,a); "
+        "os._exit(0)'"
+    )
+    send(fd, command)
+    send(
+        fd,
+        f"/usr/bin/python3 -c 'import termios; open(\"{after}\",\"w\").write(repr(termios.tcgetattr(0)))'",
+    )
+    with open(before, encoding="utf-8") as before_file:
+        before_modes = before_file.read()
+    with open(after, encoding="utf-8") as after_file:
+        after_modes = after_file.read()
+    assert after_modes == before_modes, (before_modes, after_modes)
+    assert exit_shell(pid, fd) == 0
+
+
+def scenario_terminal_modes_repeated_stop_resume():
+    pid, fd = start()
+    read_until(fd)
+    command = (
+        "/usr/bin/python3 -c 'import os,signal,sys,termios; "
+        "a=termios.tcgetattr(0); a[3]&=~termios.ECHO; "
+        "termios.tcsetattr(0,termios.TCSANOW,a); os.kill(os.getpid(),signal.SIGTSTP); "
+        "a=termios.tcgetattr(0); "
+        "sys.exit(41) if a[3]&termios.ECHO else None; "
+        "a[3]|=termios.ECHO; a[3]&=~termios.ICANON; "
+        "termios.tcsetattr(0,termios.TCSANOW,a); os.kill(os.getpid(),signal.SIGTSTP); "
+        "a=termios.tcgetattr(0); "
+        "sys.exit(0 if (a[3]&termios.ECHO and not a[3]&termios.ICANON) else 42)'"
+    )
+    first = send(fd, command)
+    assert b"[1] Stopped" in first, first
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    second = send(fd, "fg")
+    assert b"[1] Stopped" in second, second
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    send(fd, "fg")
+    assert b"0" in send(fd, "/usr/bin/printf %s $?")
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    assert exit_shell(pid, fd) == 0
+
+
+def scenario_terminal_modes_bg_then_fg():
+    pid, fd = start()
+    read_until(fd)
+    helper = os.path.join(HOME, "bg-fg-helper.py")
+    with open(helper, "w", encoding="utf-8") as helper_file:
+        helper_file.write(
+            "import os, signal, sys, termios, time\n"
+            "a = termios.tcgetattr(0)\n"
+            "a[3] &= ~termios.ECHO\n"
+            "termios.tcsetattr(0, termios.TCSANOW, a)\n"
+            "os.kill(os.getpid(), signal.SIGTSTP)\n"
+            "while os.tcgetpgrp(0) != os.getpgrp():\n"
+            "    time.sleep(0.02)\n"
+            "sys.exit(0 if not (termios.tcgetattr(0)[3] & termios.ECHO) else 42)\n"
+        )
+    stopped = send(fd, f"/usr/bin/python3 {helper}")
+    assert b"[1] Stopped" in stopped, stopped
+    assert b"[1]" in send(fd, "bg")
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    send(fd, "fg")
+    assert b"0" in send(fd, "/usr/bin/printf %s $?")
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    assert exit_shell(pid, fd) == 0
+
+
+def scenario_interactive_errors_preserve_terminal():
+    pid, fd = start()
+    read_until(fd)
+    cases = [
+        ("definitely-not-a-carli-command", b"command not found", b"127"),
+        ('echo "unterminated', b"unclosed double quote", b"2"),
+        ("pwd > /definitely/missing/directory/file", b"No such file", b"1"),
+    ]
+    for command, message, status in cases:
+        result = send(fd, command)
+        assert message in result, result
+        assert status in send(fd, "/usr/bin/printf %s $?")
+        assert_shell_modes_are_canonical_and_echoing(fd)
+    assert b"still-usable" in send(fd, "/usr/bin/printf still-usable")
+    assert exit_shell(pid, fd) == 0
+
+
+def scenario_fg_output_failure_retains_job():
+    pid, fd = start()
+    read_until(fd)
+    stop_command(fd, "sleep 30")
+    failed = send(fd, "fg %1 > /dev/full")
+    assert b"could not write output" in failed, failed
+    assert b"[1] Stopped sleep 30" in send(fd, "jobs")
+    os.write(fd, b"fg %1\r")
+    interrupt_foreground(fd)
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    assert exit_shell(pid, fd) == 0
+
+
+def scenario_ctrl_d_preserves_last_status():
+    pid, fd = start()
+    read_until(fd)
+    send(fd, "sh -c 'exit 23'")
+    os.write(fd, b"\x04")
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 23
+
+
+def scenario_ctrl_d_hangs_up_stopped_job():
+    pid_file = os.path.join(HOME, "ctrl-d-child.pid")
+    pid, fd = start()
+    read_until(fd)
+    stop_command(fd, f"sh -c 'echo $$ > {pid_file}; sleep 30'")
+    with open(pid_file, encoding="utf-8") as child_pid_file:
+        child_pid = int(child_pid_file.read())
+    os.write(fd, b"\x04")
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 148
+    deadline = time.monotonic() + 3
+    while True:
+        try:
+            os.kill(child_pid, 0)
+        except OSError as error:
+            if error.errno == errno.ESRCH:
+                break
+            raise
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"job {child_pid} survived Ctrl-D shell exit")
+        time.sleep(0.05)
+
+
+def scenario_history_load_and_save_errors_are_nonfatal():
+    os.mkdir(os.path.join(HOME, ".carli_history"))
+    pid, fd = start()
+    startup = read_until(fd)
+    assert b"could not load history" in startup, startup
+    assert b"usable" in send(fd, "/usr/bin/printf usable")
+    os.write(fd, b"exit 0\r")
+    output = b""
+    while True:
+        try:
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            output += chunk
+        except OSError as error:
+            if error.errno == errno.EIO:
+                break
+            raise
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 0
+    assert b"could not save history" in output, output
+
+
+def scenario_blank_lines_are_not_saved_to_history():
+    pid, fd = start()
+    read_until(fd)
+    send(fd, "   ")
+    send(fd, "\t")
+    send(fd, "/usr/bin/printf history-marker")
+    assert exit_shell(pid, fd) == 0
+    with open(os.path.join(HOME, ".carli_history"), encoding="utf-8") as history_file:
+        history = history_file.read().splitlines()
+    assert "   " not in history
+    assert "\t" not in history
+    assert "/usr/bin/printf history-marker" in history
+
+
 SCENARIOS = {
     "repeated_prompt_interrupts": scenario_repeated_prompt_interrupts,
     "job_selection_errors": scenario_job_selection_errors,
@@ -283,6 +462,15 @@ SCENARIOS = {
     "terminal_modes_normal_exit": scenario_terminal_modes_normal_exit,
     "terminal_modes_signal_exit": scenario_terminal_modes_signal_exit,
     "terminal_modes_stop_resume": scenario_terminal_modes_stop_resume,
+    "complete_termios_snapshot_restored": scenario_complete_termios_snapshot_restored,
+    "terminal_modes_repeated_stop_resume": scenario_terminal_modes_repeated_stop_resume,
+    "terminal_modes_bg_then_fg": scenario_terminal_modes_bg_then_fg,
+    "interactive_errors_preserve_terminal": scenario_interactive_errors_preserve_terminal,
+    "fg_output_failure_retains_job": scenario_fg_output_failure_retains_job,
+    "ctrl_d_preserves_last_status": scenario_ctrl_d_preserves_last_status,
+    "ctrl_d_hangs_up_stopped_job": scenario_ctrl_d_hangs_up_stopped_job,
+    "history_load_and_save_errors_are_nonfatal": scenario_history_load_and_save_errors_are_nonfatal,
+    "blank_lines_are_not_saved_to_history": scenario_blank_lines_are_not_saved_to_history,
 }
 
 try:

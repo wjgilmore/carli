@@ -76,6 +76,12 @@ The PTY integration suite runs isolated scenarios in which helper processes:
 - disable echo, stop, verify carli recovered its own mode, resume through `fg`,
   and verify the job received its saved mode again.
 
+Additional edge scenarios compare the complete termios snapshot before and
+after deliberate changes to input, output, local, and control-character fields;
+stop the same job twice with different modes; route a job through `bg` before
+`fg`; trigger launch, parse, and redirection errors; and verify that a failed
+`fg` output write leaves the stopped job recoverable.
+
 All scenarios also execute another command afterward, proving that the prompt
 remains usable. Run them with the rest of the committed suite:
 
