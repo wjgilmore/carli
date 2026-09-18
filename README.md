@@ -22,6 +22,7 @@
 - Previous-command status expansion with `$?`
 - Input redirection with `<` and output redirection with `>` and `>>`
 - Foreground process groups and terminal signal handling
+- Terminal-mode preservation across foreground commands and stopped jobs
 - Basic job control with `jobs`, `fg`, and `bg`
 - Non-interactive execution with `-c` and line-oriented batch input
 - XDG-aware system and user startup configuration
@@ -35,15 +36,21 @@
 - Login-shell behavior
 - Safe installation, registration in `/etc/shells`, and use with `chsh`
 
-carli is not yet suitable for use as a login shell. Terminal recovery,
-installation tooling, and complete login-shell behavior should be completed
-before registering it with `chsh`.
+carli is not yet suitable for use as a login shell. Installation tooling and
+complete login-shell behavior should be completed before registering it with
+`chsh`.
 
 carli gives each interactive external command its own foreground process group.
 Terminal signals such as Ctrl-C and Ctrl-Z therefore affect the command rather
 than carli itself, and carli reclaims the terminal before displaying its next
 prompt. See [Foreground process groups and signals](docs/foreground-process-groups.md)
 for the design, behavior, and current job-control limitations.
+
+carli restores its saved terminal attributes after a foreground command exits,
+is terminated, or stops. A stopped job's attributes are saved separately and
+restored when `fg` resumes it. See [Terminal-state preservation and
+restoration](docs/terminal-state-restoration.md) for the recovery guarantees and
+tests.
 
 ## Planned output formatting
 

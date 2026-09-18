@@ -67,3 +67,18 @@ fn prompt_handles_root_directory_and_missing_user() {
 fn completed_and_signaled_jobs_are_reported_and_reaped() {
     run_pty_scenario("pty_edge_cases.py", Some("job_completion_notifications"));
 }
+
+#[test]
+fn terminal_modes_are_restored_after_normal_exit() {
+    run_pty_scenario("pty_edge_cases.py", Some("terminal_modes_normal_exit"));
+}
+
+#[test]
+fn terminal_modes_are_restored_after_signal_termination() {
+    run_pty_scenario("pty_edge_cases.py", Some("terminal_modes_signal_exit"));
+}
+
+#[test]
+fn stopped_job_modes_are_preserved_across_fg() {
+    run_pty_scenario("pty_edge_cases.py", Some("terminal_modes_stop_resume"));
+}

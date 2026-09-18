@@ -40,7 +40,8 @@ For each interactive external command, carli performs these steps:
 4. Assign the terminal to the child's process group with `tcsetpgrp`.
 5. Wait for the child to exit, be terminated, or stop.
 6. Assign the terminal back to carli's process group.
-7. Record the result for `$?` and display the next prompt.
+7. Restore carli's saved terminal attributes.
+8. Record the result for `$?` and display the next prompt.
 
 The child and parent both attempt to establish the child process group. Doing
 so on both sides closes the race in which either process might run first after
@@ -110,10 +111,11 @@ program that cannot correctly own the terminal. After every normal exit,
 signal termination, or stop event, carli attempts to reclaim terminal ownership
 before reading another command.
 
-Terminal ownership and terminal modes are related but distinct. Programs such
-as Vim normally restore their own terminal modes when they exit. Additional
-terminal-mode snapshot and recovery work may still be useful for programs that
-crash after changing terminal attributes.
+Terminal ownership and terminal modes are related but distinct. Carli snapshots
+its terminal attributes before transferring ownership and restores them after
+the command exits, is terminated, or stops. It also saves a stopped job's modes
+and reapplies them before sending `SIGCONT` from `fg`. See [Terminal-state
+preservation and restoration](terminal-state-restoration.md).
 
 ## Manual verification
 

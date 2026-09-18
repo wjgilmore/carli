@@ -61,9 +61,11 @@ fg
 ```
 
 If the job was stopped, carli sends `SIGCONT` to its entire process group. The
-job may then exit normally, be interrupted with <kbd>Ctrl-C</kbd>, or be stopped
-again with <kbd>Ctrl-Z</kbd>. Carli always attempts to reclaim the terminal
-before presenting another prompt.
+job's saved terminal attributes are restored before it continues, so a
+full-screen program resumes in the mode it was using. The job may then exit
+normally, be interrupted with <kbd>Ctrl-C</kbd>, or be stopped again with
+<kbd>Ctrl-Z</kbd>. Carli always attempts to reclaim the terminal and restore its
+own attributes before presenting another prompt.
 
 ## Resuming in the background
 

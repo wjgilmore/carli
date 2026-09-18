@@ -1,5 +1,6 @@
 use nix::errno::Errno;
 use nix::sys::signal::{self, SigHandler, Signal, killpg};
+use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
 use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::{Pid, getpgrp, getpid, setpgid, tcgetpgrp, tcsetpgrp};
 use rustyline::DefaultEditor;
@@ -26,11 +27,13 @@ struct Job {
     process_group: Pid,
     command: String,
     state: JobState,
+    terminal_modes: Option<Termios>,
 }
 
 struct JobControl {
     interactive: bool,
     shell_process_group: Pid,
+    shell_terminal_modes: Option<Termios>,
     jobs: Vec<Job>,
     next_job_id: usize,
 }
@@ -61,20 +64,21 @@ fn main() -> std::process::ExitCode {
         }
     };
     let interactive = invocation.command.is_none() && io::stdin().is_terminal();
-    let shell_process_group = if interactive {
+    let (shell_process_group, shell_terminal_modes) = if interactive {
         match setup_interactive_shell() {
-            Ok(process_group) => process_group,
+            Ok(state) => (state.0, Some(state.1)),
             Err(error) => {
                 eprintln!("carli: could not initialize job control: {error}");
                 return std::process::ExitCode::FAILURE;
             }
         }
     } else {
-        getpgrp()
+        (getpgrp(), None)
     };
     let mut job_control = JobControl {
         interactive,
         shell_process_group,
+        shell_terminal_modes,
         jobs: Vec::new(),
         next_job_id: 1,
     };
@@ -531,6 +535,11 @@ fn foreground_job(
         return 1;
     }
 
+    if let Err(error) = refresh_shell_terminal_modes(job_control) {
+        eprintln!("carli: fg: could not save terminal modes: {error}");
+        return 1;
+    }
+
     let index = match find_job(arguments, &job_control.jobs, "fg") {
         Ok(index) => index,
         Err(status) => return status,
@@ -548,10 +557,19 @@ fn foreground_job(
         return 1;
     }
 
+    if let Some(modes) = job.terminal_modes.as_ref()
+        && let Err(error) = tcsetattr(io::stdin(), SetArg::TCSADRAIN, modes)
+    {
+        eprintln!("carli: fg: could not restore job terminal modes: {error}");
+        let _ = reclaim_terminal(job_control);
+        job_control.jobs.push(job);
+        return 1;
+    }
+
     if job.state == JobState::Stopped {
         if let Err(error) = killpg(job.process_group, Signal::SIGCONT) {
             eprintln!("carli: fg: could not continue job: {error}");
-            let _ = tcsetpgrp(io::stdin(), job_control.shell_process_group);
+            let _ = reclaim_terminal(job_control);
             job_control.jobs.push(job);
             return 1;
         }
@@ -559,8 +577,8 @@ fn foreground_job(
     }
 
     let status = wait_for_foreground_job(job, &mut job_control.jobs, &mut job_control.next_job_id);
-    if let Err(error) = tcsetpgrp(io::stdin(), job_control.shell_process_group) {
-        eprintln!("carli: fg: could not reclaim the terminal: {error}");
+    if let Err(error) = reclaim_terminal(job_control) {
+        eprintln!("carli: fg: could not restore the terminal: {error}");
         return 1;
     }
     status
@@ -688,6 +706,13 @@ fn run_external(
     output: Option<File>,
     job_control: &mut JobControl,
 ) -> i32 {
+    if job_control.interactive
+        && let Err(error) = refresh_shell_terminal_modes(job_control)
+    {
+        eprintln!("carli: {program}: could not save terminal modes: {error}");
+        return 1;
+    }
+
     let mut command = Command::new(program);
     command.args(arguments);
     if let Some(input) = input {
@@ -762,20 +787,21 @@ fn run_external(
             process_group: child_pid,
             command: command_text,
             state: JobState::Running,
+            terminal_modes: None,
         },
         &mut job_control.jobs,
         &mut job_control.next_job_id,
     );
 
-    if let Err(error) = tcsetpgrp(io::stdin(), job_control.shell_process_group) {
-        eprintln!("carli: could not reclaim the terminal: {error}");
+    if let Err(error) = reclaim_terminal(job_control) {
+        eprintln!("carli: {program}: could not restore the terminal: {error}");
         return 1;
     }
 
     result
 }
 
-fn setup_interactive_shell() -> io::Result<Pid> {
+fn setup_interactive_shell() -> io::Result<(Pid, Termios)> {
     loop {
         let process_group = getpgrp();
         let foreground_group = tcgetpgrp(io::stdin()).map_err(errno_to_io)?;
@@ -809,7 +835,21 @@ fn setup_interactive_shell() -> io::Result<Pid> {
 
     let process_group = getpgrp();
     tcsetpgrp(io::stdin(), process_group).map_err(errno_to_io)?;
-    Ok(process_group)
+    let terminal_modes = tcgetattr(io::stdin()).map_err(errno_to_io)?;
+    Ok((process_group, terminal_modes))
+}
+
+fn refresh_shell_terminal_modes(job_control: &mut JobControl) -> io::Result<()> {
+    job_control.shell_terminal_modes = Some(tcgetattr(io::stdin()).map_err(errno_to_io)?);
+    Ok(())
+}
+
+fn reclaim_terminal(job_control: &JobControl) -> io::Result<()> {
+    tcsetpgrp(io::stdin(), job_control.shell_process_group).map_err(errno_to_io)?;
+    if let Some(modes) = job_control.shell_terminal_modes.as_ref() {
+        tcsetattr(io::stdin(), SetArg::TCSADRAIN, modes).map_err(errno_to_io)?;
+    }
+    Ok(())
 }
 
 fn foreground_signals() -> [Signal; 5] {
@@ -833,6 +873,15 @@ fn wait_for_foreground_job(mut job: Job, jobs: &mut Vec<Job>, next_job_id: &mut 
                     *next_job_id += 1;
                 }
                 job.state = JobState::Stopped;
+                match tcgetattr(io::stdin()) {
+                    Ok(modes) => job.terminal_modes = Some(modes),
+                    Err(error) => {
+                        eprintln!(
+                            "carli: could not save terminal modes for {}: {error}",
+                            job.command
+                        )
+                    }
+                }
                 eprintln!("[{}] Stopped {}", job.id, job.command);
                 jobs.push(job);
                 return 128 + signal as i32;

@@ -38,6 +38,7 @@ coverage:
 | `$?` expansion | Parser quoting tests plus external, built-in, parse, Ctrl-C, Ctrl-\\, and startup statuses across integration tests |
 | `<`, `>`, and `>>` redirection | Parser syntax plus real input, truncate, append, quoted paths, built-in output, and all documented failures across both non-interactive integration files |
 | Foreground process groups and terminal signals | Prompt Ctrl-C, foreground Ctrl-C/Ctrl-\\, Ctrl-Z, shell survival, and terminal return in `tests/pty_features.py` |
+| Terminal-mode preservation | Normal exit, signal termination, shell recovery after stop, and stopped-job mode restoration through `fg` in isolated `tests/pty_edge_cases.py` scenarios |
 | `jobs`, `fg`, and `bg` | Stopped/running states, output redirection, percent/numeric/default selectors, multiple jobs, completion, and errors in `tests/pty_features.py` |
 | `-c` and batch input | Output, statuses, usage errors, state persistence, blank lines, EOF, history isolation, and last-status behavior across both non-interactive integration files |
 | XDG-aware startup configuration | XDG precedence, HOME fallback, interactive/login loading, automation isolation, comments, continued errors, startup status, `exit`, prompt configuration, and default PATH across integration and PTY tests |

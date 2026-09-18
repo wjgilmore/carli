@@ -210,6 +210,67 @@ def scenario_job_completion_notifications():
     assert exit_shell(pid, fd) == 0
 
 
+def assert_shell_modes_are_canonical_and_echoing(fd):
+    command = (
+        "/usr/bin/python3 -c 'import sys,termios; f=termios.tcgetattr(0)[3]; "
+        "sys.exit(0 if (f&termios.ECHO and f&termios.ICANON) else 42)'"
+    )
+    send(fd, command)
+    assert b"0" in send(fd, "/usr/bin/printf %s $?")
+
+
+def scenario_terminal_modes_normal_exit():
+    pid, fd = start()
+    read_until(fd)
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    command = (
+        "/usr/bin/python3 -c 'import os,termios; "
+        "a=termios.tcgetattr(0); a[3]&=~(termios.ECHO|termios.ICANON); "
+        "termios.tcsetattr(0,termios.TCSANOW,a); os._exit(0)'"
+    )
+    send(fd, command)
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    assert b"usable" in send(fd, "/usr/bin/printf usable")
+    assert exit_shell(pid, fd) == 0
+
+
+def scenario_terminal_modes_signal_exit():
+    pid, fd = start()
+    read_until(fd)
+    command = (
+        "/usr/bin/python3 -c 'import termios,time; "
+        "a=termios.tcgetattr(0); a[3]&=~(termios.ECHO|termios.ICANON); "
+        "termios.tcsetattr(0,termios.TCSANOW,a); time.sleep(30)'"
+    )
+    os.write(fd, command.encode() + b"\r")
+    time.sleep(0.2)
+    os.write(fd, b"\x03")
+    read_until(fd)
+    assert b"130" in send(fd, "/usr/bin/printf %s $?")
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    assert exit_shell(pid, fd) == 0
+
+
+def scenario_terminal_modes_stop_resume():
+    pid, fd = start()
+    read_until(fd)
+    command = (
+        "/usr/bin/python3 -c 'import os,signal,sys,termios; "
+        "a=termios.tcgetattr(0); a[3]&=~termios.ECHO; "
+        "termios.tcsetattr(0,termios.TCSANOW,a); "
+        "os.kill(os.getpid(),signal.SIGTSTP); "
+        "sys.exit(0 if not (termios.tcgetattr(0)[3]&termios.ECHO) else 42)'"
+    )
+    stopped = send(fd, command)
+    assert b"Stopped" in stopped, stopped
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    foregrounded = send(fd, "fg")
+    assert b"python3 -c" in foregrounded, foregrounded
+    assert b"0" in send(fd, "/usr/bin/printf %s $?")
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    assert exit_shell(pid, fd) == 0
+
+
 SCENARIOS = {
     "repeated_prompt_interrupts": scenario_repeated_prompt_interrupts,
     "job_selection_errors": scenario_job_selection_errors,
@@ -219,6 +280,9 @@ SCENARIOS = {
     "shell_hangs_up_stopped_jobs": scenario_shell_hangs_up_stopped_jobs,
     "prompt_root_and_unknown_user": scenario_prompt_root_and_unknown_user,
     "job_completion_notifications": scenario_job_completion_notifications,
+    "terminal_modes_normal_exit": scenario_terminal_modes_normal_exit,
+    "terminal_modes_signal_exit": scenario_terminal_modes_signal_exit,
+    "terminal_modes_stop_resume": scenario_terminal_modes_stop_resume,
 }
 
 try:
