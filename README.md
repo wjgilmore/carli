@@ -4,8 +4,8 @@
 the terminal recovery, disconnect cleanup, and reversible installation tooling
 needed for cautious local use as a login shell. It is not a Bash- or
 Zsh-compatible scripting shell; review the limitations before changing your
-account shell. Linux and macOS are tested in continuous integration; see
-[macOS support](docs/macos.md) for platform-specific setup and safeguards.
+account shell. Linux and macOS are supported; see [macOS
+support](docs/macos.md) for platform-specific setup and safeguards.
 
 ## Features
 
@@ -237,6 +237,5 @@ cargo test
 Cargo will compile carli and run both its unit and integration tests. The
 integration suite covers command execution, redirection, startup configuration,
 batch mode, history, terminal signals, and job control. The PTY tests require
-`python3`. The complete suite runs in CI on Linux and macOS. See [Testing
-carli](docs/testing.md) for the feature-by-feature coverage map and complete
-verification commands.
+`python3`. See [Testing carli](docs/testing.md) for the feature-by-feature
+coverage map and complete verification commands.

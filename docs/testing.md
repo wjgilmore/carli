@@ -11,12 +11,11 @@ tests, and pseudo-terminal integration tests. The PTY test is launched by a
 Rust test wrapper and requires `python3`; it still runs as part of ordinary
 `cargo test`.
 
-GitHub Actions runs the same commands on `ubuntu-latest` and `macos-latest` for
-every push and pull request. Two failure-path tests use Linux's `/dev/full` and
-are gated to Linux; the rest of the suite, including the process-group,
-terminal, and installer coverage, runs on both platforms. Installer tests also
-exercise simulated BSD `stat` output and macOS Directory Services behavior so
-those safety branches remain covered when tests are run locally on Linux.
+Two failure-path tests use Linux's `/dev/full` and are gated to Linux; the rest
+of the suite, including the process-group, terminal, and installer coverage,
+runs on both platforms. Installer tests also exercise simulated BSD `stat`
+output and macOS Directory Services behavior so those safety branches remain
+covered when tests are run locally on Linux.
 
 The suite deliberately uses separately named tests for independent behavior.
 This keeps a failure in an invocation edge case, parser boundary, built-in,

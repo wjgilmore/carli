@@ -1,9 +1,8 @@
 # macOS support
 
-Carli supports macOS as an interactive shell and is continuously built and
-tested on GitHub's current `macos-latest` runner. The same suite also runs on
-Linux. This catches platform differences in process groups, terminal handling,
-system utilities, installation, and uninstallation.
+Carli supports macOS as an interactive shell. Its test suite covers platform
+differences in process groups, terminal handling, system utilities,
+installation, and uninstallation.
 
 ## Prerequisites
 
