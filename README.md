@@ -23,6 +23,7 @@
 - Input redirection with `<` and output redirection with `>` and `>>`
 - Foreground process groups and terminal signal handling
 - Basic job control with `jobs`, `fg`, and `bg`
+- Non-interactive execution with `-c` and line-oriented batch input
 - Literal variable text inside single quotes or after a backslash
 - Graceful handling of blank input, EOF, parse errors, and command errors
 
@@ -114,6 +115,17 @@ control](docs/job-control.md) for examples and current limitations.
 Commands that are not built-ins are treated as external programs. For example,
 `ls -al`, `cargo test`, and `printenv HOME` are located through `PATH` and run as
 child processes.
+
+Run one command without starting an interactive prompt with `-c`:
+
+```sh
+carli -c 'echo "hello from carli"'
+```
+
+When standard input is not a terminal, carli reads and executes one command per
+line without displaying a prompt or loading command history. See [Invocation
+modes](docs/invocation-modes.md) for behavior, exit statuses, and current syntax
+limitations.
 
 carli supports redirecting standard input and standard output:
 

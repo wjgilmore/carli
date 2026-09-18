@@ -6,7 +6,7 @@ use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::io::{IsTerminal, Write};
+use std::io::{BufRead, IsTerminal, Write};
 use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
@@ -35,6 +35,16 @@ struct JobControl {
     next_job_id: usize,
 }
 
+enum CommandOutcome {
+    Status(i32),
+    Exit(u8),
+}
+
+struct Invocation {
+    command: Option<String>,
+    login_shell: bool,
+}
+
 fn history_path() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -42,7 +52,15 @@ fn history_path() -> Option<PathBuf> {
 }
 
 fn main() -> std::process::ExitCode {
-    let interactive = io::stdin().is_terminal();
+    let invocation = match parse_invocation() {
+        Ok(invocation) => invocation,
+        Err(message) => {
+            eprintln!("carli: {message}");
+            eprintln!("usage: carli [-c COMMAND]");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    let interactive = invocation.command.is_none() && io::stdin().is_terminal();
     let shell_process_group = if interactive {
         match setup_interactive_shell() {
             Ok(process_group) => process_group,
@@ -54,9 +72,57 @@ fn main() -> std::process::ExitCode {
     } else {
         getpgrp()
     };
+    let mut job_control = JobControl {
+        interactive,
+        shell_process_group,
+        jobs: Vec::new(),
+        next_job_id: 1,
+    };
 
+    let _login_shell = invocation.login_shell;
+    let exit_status = match invocation.command {
+        Some(command) => outcome_status(execute_line(&command, 0, &mut job_control)),
+        None if interactive => run_interactive(&mut job_control),
+        None => run_batch(&mut job_control),
+    };
+
+    hang_up_jobs(&job_control.jobs);
+    std::process::ExitCode::from(exit_status)
+}
+
+fn parse_invocation() -> Result<Invocation, String> {
+    let mut arguments = std::env::args_os();
+    let program = arguments.next().unwrap_or_default();
+    let login_shell = PathBuf::from(program)
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with('-'));
+    let arguments: Vec<_> = arguments.collect();
+
+    let command = match arguments.as_slice() {
+        [] => None,
+        [flag, command] if flag == "-c" => Some(
+            command
+                .clone()
+                .into_string()
+                .map_err(|_| "command is not valid UTF-8".to_string())?,
+        ),
+        [flag] if flag == "-c" => return Err("option `-c` requires a command".to_string()),
+        [argument, ..] => {
+            return Err(format!(
+                "unsupported argument `{}`",
+                argument.to_string_lossy()
+            ));
+        }
+    };
+
+    Ok(Invocation {
+        command,
+        login_shell,
+    })
+}
+
+fn run_interactive(job_control: &mut JobControl) -> u8 {
     let mut editor = DefaultEditor::new().expect("carli: could not initialize line editor");
-
     let history_path = history_path();
 
     if let Some(path) = &history_path
@@ -67,13 +133,6 @@ fn main() -> std::process::ExitCode {
     }
 
     let mut last_status = 0;
-    let mut job_control = JobControl {
-        interactive,
-        shell_process_group,
-        jobs: Vec::new(),
-        next_job_id: 1,
-    };
-
     let exit_status = loop {
         reap_jobs(&mut job_control.jobs);
         let prompt = build_prompt();
@@ -90,7 +149,7 @@ fn main() -> std::process::ExitCode {
             Err(ReadlineError::Eof) => {
                 // Ctrl-D exits carli.
                 println!();
-                break 0;
+                break status_to_u8(last_status);
             }
 
             Err(error) => {
@@ -105,65 +164,11 @@ fn main() -> std::process::ExitCode {
             eprintln!("carli: could not add history entry: {error}");
         }
 
-        let parsed = match parse_command_line_with_status(&line, last_status) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                report_parse_error(error);
-                last_status = 2;
-                continue;
-            }
-        };
-        if parsed.words.is_empty() {
-            continue;
-        }
-
-        let input = match parsed.input.as_deref().map(File::open).transpose() {
-            Ok(input) => input,
-            Err(error) => {
-                let path = parsed.input.as_deref().unwrap_or_default();
-                eprintln!("carli: {path}: {error}");
-                last_status = 1;
-                continue;
-            }
-        };
-        let mut output = match parsed.output.as_ref().map(open_output).transpose() {
-            Ok(output) => output,
-            Err(error) => {
-                let path = output_path(parsed.output.as_ref());
-                eprintln!("carli: {path}: {error}");
-                last_status = 1;
-                continue;
-            }
-        };
-
-        match parsed.words[0].as_str() {
-            "cd" => last_status = change_directory(&parsed.words[1..]),
-            "exit" => match exit_status(&parsed.words[1..]) {
-                Ok(status) => break status,
-                Err(status) => {
-                    last_status = status;
-                }
-            },
-            "export" => last_status = export_variable(&parsed.words[1..]),
-            "pwd" => last_status = print_working_directory(&parsed.words[1..], output.as_mut()),
-            "which" => last_status = which(&parsed.words[1..], output.as_mut()),
-            "jobs" => {
-                last_status = list_jobs(&parsed.words[1..], &job_control.jobs, output.as_mut())
-            }
-            "fg" => {
-                last_status = foreground_job(&parsed.words[1..], &mut job_control, output.as_mut())
-            }
-            "bg" => {
-                last_status = background_job(&parsed.words[1..], &mut job_control, output.as_mut())
-            }
-            program => {
-                last_status =
-                    run_external(program, &parsed.words[1..], input, output, &mut job_control)
-            }
+        match execute_line(&line, last_status, job_control) {
+            CommandOutcome::Status(status) => last_status = status,
+            CommandOutcome::Exit(status) => break status,
         }
     };
-
-    hang_up_jobs(&job_control.jobs);
 
     if let Some(path) = &history_path
         && let Err(error) = editor.save_history(path)
@@ -171,7 +176,28 @@ fn main() -> std::process::ExitCode {
         eprintln!("carli: could not save history: {error}");
     }
 
-    std::process::ExitCode::from(exit_status)
+    exit_status
+}
+
+fn run_batch(job_control: &mut JobControl) -> u8 {
+    let stdin = io::stdin();
+    let mut last_status = 0;
+
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(line) => line,
+            Err(error) => {
+                eprintln!("carli: could not read input: {error}");
+                return 1;
+            }
+        };
+        match execute_line(&line, last_status, job_control) {
+            CommandOutcome::Status(status) => last_status = status,
+            CommandOutcome::Exit(status) => return status,
+        }
+    }
+
+    status_to_u8(last_status)
 }
 
 fn is_builtin(name: &str) -> bool {
@@ -183,6 +209,65 @@ fn is_builtin(name: &str) -> bool {
 
 fn report_parse_error(error: ParseError) {
     eprintln!("carli: {error}");
+}
+
+fn execute_line(line: &str, last_status: i32, job_control: &mut JobControl) -> CommandOutcome {
+    let parsed = match parse_command_line_with_status(line, last_status) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            report_parse_error(error);
+            return CommandOutcome::Status(2);
+        }
+    };
+    if parsed.words.is_empty() {
+        return CommandOutcome::Status(last_status);
+    }
+
+    let input = match parsed.input.as_deref().map(File::open).transpose() {
+        Ok(input) => input,
+        Err(error) => {
+            let path = parsed.input.as_deref().unwrap_or_default();
+            eprintln!("carli: {path}: {error}");
+            return CommandOutcome::Status(1);
+        }
+    };
+    let mut output = match parsed.output.as_ref().map(open_output).transpose() {
+        Ok(output) => output,
+        Err(error) => {
+            let path = output_path(parsed.output.as_ref());
+            eprintln!("carli: {path}: {error}");
+            return CommandOutcome::Status(1);
+        }
+    };
+
+    let status = match parsed.words[0].as_str() {
+        "cd" => change_directory(&parsed.words[1..]),
+        "exit" => {
+            return match exit_status(&parsed.words[1..], last_status) {
+                Ok(status) => CommandOutcome::Exit(status),
+                Err(status) => CommandOutcome::Status(status),
+            };
+        }
+        "export" => export_variable(&parsed.words[1..]),
+        "pwd" => print_working_directory(&parsed.words[1..], output.as_mut()),
+        "which" => which(&parsed.words[1..], output.as_mut()),
+        "jobs" => list_jobs(&parsed.words[1..], &job_control.jobs, output.as_mut()),
+        "fg" => foreground_job(&parsed.words[1..], job_control, output.as_mut()),
+        "bg" => background_job(&parsed.words[1..], job_control, output.as_mut()),
+        program => run_external(program, &parsed.words[1..], input, output, job_control),
+    };
+    CommandOutcome::Status(status)
+}
+
+fn outcome_status(outcome: CommandOutcome) -> u8 {
+    match outcome {
+        CommandOutcome::Status(status) => status_to_u8(status),
+        CommandOutcome::Exit(status) => status,
+    }
+}
+
+fn status_to_u8(status: i32) -> u8 {
+    status.rem_euclid(256) as u8
 }
 
 fn export_variable(arguments: &[String]) -> i32 {
@@ -458,7 +543,7 @@ fn output_path(redirection: Option<&OutputRedirection>) -> &str {
     }
 }
 
-fn exit_status(arguments: &[String]) -> Result<u8, i32> {
+fn exit_status(arguments: &[String], last_status: i32) -> Result<u8, i32> {
     if arguments.len() > 1 {
         eprintln!("carli: exit: too many arguments");
         return Err(1);
@@ -472,7 +557,7 @@ fn exit_status(arguments: &[String]) -> Result<u8, i32> {
                 Ok(2)
             }
         },
-        None => Ok(0),
+        None => Ok(status_to_u8(last_status)),
     }
 }
 
