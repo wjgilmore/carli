@@ -17,7 +17,7 @@ impl TestDirectory {
             std::process::id()
         ));
         fs::create_dir_all(&path).unwrap();
-        Self(path)
+        Self(fs::canonicalize(path).unwrap())
     }
 
     fn path(&self) -> &Path {
@@ -370,7 +370,10 @@ fn startup_files_can_change_directory_run_commands_and_redirect() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
-        destination.display().to_string()
+        fs::canonicalize(&destination)
+            .unwrap()
+            .display()
+            .to_string()
     );
     assert_eq!(fs::read(redirected).unwrap(), b"startup");
 }
@@ -469,7 +472,7 @@ fn cd_accepts_relative_and_quoted_paths() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
-        child.display().to_string()
+        fs::canonicalize(&child).unwrap().display().to_string()
     );
 }
 

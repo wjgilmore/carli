@@ -73,7 +73,7 @@ try:
     read_until(fd)
 
     # Prompt placeholders render and update after cd while unknown ones remain.
-    changed_prompt = b"carli:carli-test:tmp:/tmp:{unknown}> "
+    changed_prompt = f"carli:carli-test:tmp:{os.path.realpath('/tmp')}:{{unknown}}> ".encode()
     os.write(fd, b"cd /tmp\r")
     read_until(fd, changed_prompt)
     os.write(fd, f"cd {START_DIRECTORY}\r".encode())

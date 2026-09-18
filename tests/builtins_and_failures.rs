@@ -17,7 +17,7 @@ impl TestDirectory {
             std::process::id()
         ));
         fs::create_dir_all(&path).unwrap();
-        Self(path)
+        Self(fs::canonicalize(path).unwrap())
     }
 
     fn path(&self) -> &Path {
