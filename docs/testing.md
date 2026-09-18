@@ -11,6 +11,12 @@ tests, and pseudo-terminal integration tests. The PTY test is launched by a
 Rust test wrapper and requires `python3`; it still runs as part of ordinary
 `cargo test`.
 
+The suite deliberately uses separately named tests for independent behavior.
+This keeps a failure in an invocation edge case, parser boundary, built-in,
+startup action, or interactive job-control path from being hidden inside one
+large smoke test. `tests/feature_matrix.rs` contains the broad process-level
+behavior matrix, while `tests/pty_features.rs` runs isolated terminal scenarios.
+
 ## README coverage map
 
 Every item listed under README "Completed" features maps to committed automated
@@ -37,6 +43,9 @@ coverage:
 | XDG-aware startup configuration | XDG precedence, HOME fallback, interactive/login loading, automation isolation, comments, continued errors, startup status, `exit`, prompt configuration, and default PATH across integration and PTY tests |
 | Literal variables in single quotes or after escapes | Dedicated literal-expansion unit tests in `src/lib.rs` |
 | Graceful blank input, EOF, parse errors, and command errors | Unit parse errors plus batch blank/EOF statuses, interactive Ctrl-D, command-not-found, invalid invocation, and redirection failures in integration tests |
+
+The coverage map is a summary rather than the test inventory. Run
+`cargo test -- --list` to see every independently named test.
 
 ## Complete verification
 

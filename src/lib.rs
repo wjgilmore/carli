@@ -511,4 +511,191 @@ mod tests {
             Err(ParseError::DuplicateOutputRedirection)
         );
     }
+
+    #[test]
+    fn parses_empty_and_whitespace_only_lines() {
+        assert_eq!(parse_line("").unwrap(), Vec::<String>::new());
+        assert_eq!(parse_line(" \t\n\r ").unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn concatenates_adjacent_quoted_and_unquoted_segments() {
+        assert_eq!(
+            parse_line("echo pre'middle'\"post\" ''suffix prefix''").unwrap(),
+            vec!["echo", "premiddlepost", "suffix", "prefix"]
+        );
+    }
+
+    #[test]
+    fn single_quotes_preserve_backslashes_and_special_characters() {
+        assert_eq!(
+            parse_line(r"echo 'a\b $HOME # < >'").unwrap(),
+            vec!["echo", r"a\b $HOME # < >"]
+        );
+    }
+
+    #[test]
+    fn double_quote_backslash_escapes_the_next_character() {
+        assert_eq!(
+            parse_line(r#"echo "a\"b\$c\\d""#).unwrap(),
+            vec!["echo", "a\"b$c\\d"]
+        );
+    }
+
+    #[test]
+    fn reports_trailing_backslash_inside_and_outside_double_quotes() {
+        assert_eq!(
+            parse_line("echo trailing\\"),
+            Err(ParseError::TrailingEscape)
+        );
+        assert_eq!(
+            parse_line("echo \"trailing\\"),
+            Err(ParseError::TrailingEscape)
+        );
+    }
+
+    #[test]
+    fn dollar_without_a_valid_name_remains_literal() {
+        assert_eq!(
+            parse_line("echo $ $- $9 $. ${CARLI_TEST_UNSET}").unwrap(),
+            vec!["echo", "$", "$-", "$9", "$.", ""]
+        );
+    }
+
+    #[test]
+    fn variable_values_do_not_undergo_word_splitting_or_reparsing() {
+        unsafe {
+            std::env::set_var("CARLI_TEST_RAW_VALUE", "two words > file # text");
+        }
+        assert_eq!(
+            parse_command_line("echo $CARLI_TEST_RAW_VALUE").unwrap(),
+            ParsedCommand {
+                words: vec!["echo".to_string(), "two words > file # text".to_string()],
+                input: None,
+                output: None,
+            }
+        );
+    }
+
+    #[test]
+    fn braced_names_accept_boundaries_and_reject_non_ascii_names() {
+        unsafe {
+            std::env::set_var("_A0", "boundary");
+        }
+        assert_eq!(parse_line("echo ${_A0}").unwrap(), vec!["echo", "boundary"]);
+        assert_eq!(
+            parse_line("echo ${NÁME}"),
+            Err(ParseError::InvalidVariableName)
+        );
+        assert_eq!(
+            parse_line("echo ${BAD-NAME}"),
+            Err(ParseError::InvalidVariableName)
+        );
+    }
+
+    #[test]
+    fn previous_status_supports_zero_and_large_internal_values() {
+        assert_eq!(
+            parse_line_with_status("echo $?", 0).unwrap(),
+            vec!["echo", "0"]
+        );
+        assert_eq!(
+            parse_line_with_status("echo $?", 1024).unwrap(),
+            vec!["echo", "1024"]
+        );
+    }
+
+    #[test]
+    fn parses_redirections_before_between_and_after_words() {
+        assert_eq!(
+            parse_command_line("> out command first < in second").unwrap(),
+            ParsedCommand {
+                words: vec![
+                    "command".to_string(),
+                    "first".to_string(),
+                    "second".to_string()
+                ],
+                input: Some("in".to_string()),
+                output: Some(OutputRedirection::Truncate("out".to_string())),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_empty_quoted_redirection_path() {
+        assert_eq!(
+            parse_command_line("echo value > ''").unwrap(),
+            ParsedCommand {
+                words: vec!["echo".to_string(), "value".to_string()],
+                input: None,
+                output: Some(OutputRedirection::Truncate(String::new())),
+            }
+        );
+    }
+
+    #[test]
+    fn reports_each_missing_redirection_target_form() {
+        for (line, operator) in [("cat <", "<"), ("echo >", ">"), ("echo >>", ">>")] {
+            assert_eq!(
+                parse_command_line(line),
+                Err(ParseError::MissingRedirectionTarget(operator)),
+                "line: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_an_operator_where_a_redirection_path_is_required() {
+        for line in ["cat < > out", "echo > < in", "echo >> > out"] {
+            assert!(
+                matches!(
+                    parse_command_line(line),
+                    Err(ParseError::MissingRedirectionTarget(_))
+                ),
+                "line: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_every_duplicate_output_operator_combination() {
+        for line in [
+            "echo > one > two",
+            "echo > one >> two",
+            "echo >> one > two",
+            "echo >> one >> two",
+        ] {
+            assert_eq!(
+                parse_command_line(line),
+                Err(ParseError::DuplicateOutputRedirection),
+                "line: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_error_messages_are_stable_and_specific() {
+        let cases = [
+            (ParseError::UnclosedSingleQuote, "unclosed single quote"),
+            (ParseError::UnclosedDoubleQuote, "unclosed double quote"),
+            (ParseError::TrailingEscape, "trailing backslash"),
+            (ParseError::UnclosedVariableBrace, "unclosed variable brace"),
+            (ParseError::InvalidVariableName, "invalid variable name"),
+            (
+                ParseError::DuplicateInputRedirection,
+                "multiple input redirections are not supported",
+            ),
+            (
+                ParseError::DuplicateOutputRedirection,
+                "multiple output redirections are not supported",
+            ),
+        ];
+        for (error, message) in cases {
+            assert_eq!(error.to_string(), message);
+        }
+        assert_eq!(
+            ParseError::MissingRedirectionTarget(">>").to_string(),
+            "missing file after `>>`"
+        );
+    }
 }

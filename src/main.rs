@@ -901,3 +901,92 @@ fn exit_status_from_process(status: std::process::ExitStatus) -> i32 {
 fn errno_to_io(error: Errno) -> io::Error {
     io::Error::from_raw_os_error(error as i32)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_registry_contains_exactly_the_implemented_builtins() {
+        for name in ["bg", "cd", "exit", "export", "fg", "jobs", "pwd", "which"] {
+            assert!(is_builtin(name), "missing builtin: {name}");
+        }
+        for name in ["", "echo", "history", "BG", " cd"] {
+            assert!(!is_builtin(name), "unexpected builtin: {name}");
+        }
+    }
+
+    #[test]
+    fn variable_name_validation_covers_boundaries() {
+        for name in ["A", "z", "_", "_NAME_2", "Name123"] {
+            assert!(is_valid_variable_name(name), "valid name: {name}");
+        }
+        for name in ["", "2NAME", "BAD-NAME", "HAS SPACE", "NÁME", "NAME="] {
+            assert!(!is_valid_variable_name(name), "invalid name: {name}");
+        }
+    }
+
+    #[test]
+    fn internal_statuses_wrap_to_unix_exit_byte() {
+        for (status, expected) in [
+            (0, 0),
+            (1, 1),
+            (255, 255),
+            (256, 0),
+            (257, 1),
+            (-1, 255),
+            (-256, 0),
+        ] {
+            assert_eq!(status_to_u8(status), expected, "status: {status}");
+        }
+    }
+
+    #[test]
+    fn exit_status_uses_explicit_or_previous_status() {
+        assert_eq!(exit_status(&[], 37), Ok(37));
+        assert_eq!(exit_status(&[], 256), Ok(0));
+        assert_eq!(exit_status(&["0".to_string()], 37), Ok(0));
+        assert_eq!(exit_status(&["255".to_string()], 0), Ok(255));
+        assert_eq!(exit_status(&["invalid".to_string()], 0), Ok(2));
+        assert_eq!(exit_status(&["1".to_string(), "2".to_string()], 0), Err(1));
+    }
+
+    #[test]
+    fn output_path_handles_both_redirection_modes() {
+        assert_eq!(output_path(None), "");
+        assert_eq!(
+            output_path(Some(&OutputRedirection::Truncate("one".to_string()))),
+            "one"
+        );
+        assert_eq!(
+            output_path(Some(&OutputRedirection::Append("two".to_string()))),
+            "two"
+        );
+    }
+
+    #[test]
+    fn foreground_signal_set_is_complete() {
+        assert_eq!(
+            foreground_signals(),
+            [
+                Signal::SIGINT,
+                Signal::SIGQUIT,
+                Signal::SIGTSTP,
+                Signal::SIGTTIN,
+                Signal::SIGTTOU,
+            ]
+        );
+    }
+
+    #[test]
+    fn process_exit_status_maps_normal_and_signaled_children() {
+        let normal = Command::new("sh").args(["-c", "exit 29"]).status().unwrap();
+        assert_eq!(exit_status_from_process(normal), 29);
+
+        let signaled = Command::new("sh")
+            .args(["-c", "kill -TERM $$"])
+            .status()
+            .unwrap();
+        assert_eq!(exit_status_from_process(signaled), 143);
+    }
+}
