@@ -1,28 +1,63 @@
 # carli Shell
 
-`carli` is a small Unix shell written in Rust as a learning project. It includes
-the terminal recovery, disconnect cleanup, and reversible installation tooling
-needed for cautious local use as a login shell. It is not a Bash- or
-Zsh-compatible scripting shell; review the limitations before changing your
-account shell. Linux and macOS are supported; see [macOS
-support](docs/macos.md) for platform-specific setup and safeguards.
+`carli` is a small Unix shell written in Rust. It is a learning project focused
+on predictable interactive behavior, job control, and safe recovery when
+something goes wrong.
+
+carli runs on Linux and macOS. It is not a replacement for Bash or Zsh yet, and
+it cannot run general-purpose shell scripts. You can safely try it without
+changing your login shell.
+
+## Quick start
+
+You need Rust 1.88 or newer. Clone the repository, enter its directory, and run:
+
+```sh
+cargo run
+```
+
+When the `carli $` prompt appears, try a few commands:
+
+```text
+carli $ pwd
+carli $ echo "hello from carli"
+carli $ printf 'beta\nalpha\n' | sort
+carli $ export GREETING=hello
+carli $ echo "$GREETING"
+carli $ exit
+```
+
+These commands run a development build directly from the repository. They do
+not install anything or change your account's login shell.
+
+To run one command without opening an interactive prompt:
+
+```sh
+cargo run -- -c 'echo "hello from carli"'
+```
 
 ## Installation
 
-Install the `carli-shell` crate with Rust 1.88 or newer:
+Install the latest published version with Cargo:
 
 ```sh
 cargo install carli-shell
 ```
 
-Cargo installs the executable in a user-managed directory. That copy is useful
-for trying `carli`, but it should not be registered directly as a login shell.
-For a stable system path, recovery precautions, and guarded registration in
-`/etc/shells`, follow [Safe login-shell installation](docs/installation.md).
+The package is called `carli-shell`, but the command it installs is `carli`.
+Cargo places the executable in a user-managed directory, normally
+`~/.cargo/bin`.
 
-Versioned releases also provide target-specific archives and a `SHA256SUMS`
-manifest. Download the manifest into the same directory as the archive, set
-`archive` to the downloaded filename, and verify it before extracting anything.
+This installation is ideal for trying carli. Do not register the Cargo-managed
+executable as your login shell because Cargo may replace or remove it. To put
+carli at a stable system path and cautiously test it as a login shell, follow
+the [safe login-shell installation guide](docs/installation.md).
+
+### Installing from a release archive
+
+Releases may also include a platform-specific archive and a `SHA256SUMS` file.
+Download both files into the same directory. Before extracting the archive,
+verify that it has not been corrupted or replaced.
 
 On Linux:
 
@@ -38,157 +73,79 @@ archive=carli-vVERSION-TARGET.tar.gz
 awk -v file="$archive" '$2 == file' SHA256SUMS | shasum -a 256 -c -
 ```
 
-Replace `VERSION` and `TARGET` with the downloaded archive's values. The command
-must print the archive name followed by `OK`. Do not extract or run the archive
-if the checksum fails or no matching checksum is found.
+Replace `VERSION` and `TARGET` with the values in the downloaded filename. A
+successful check prints the filename followed by `OK`. Do not extract or run
+the archive if the check fails or prints nothing.
 
-## Features
+## What carli can do
 
-### Completed
+carli currently supports:
 
-- Interactive prompt with customizable content
-- Interactive line editing with command history navigation
-- Persistent command history stored in `~/.carli_history`
-- Command parsing with whitespace-separated arguments
-- Single quotes, double quotes, and backslash escapes
-- External program lookup through `PATH`
-- External program execution and waiting for completion
-- Built-in commands for shell state and command lookup
-- Environment-variable export for child processes
-- `$NAME` environment-variable expansion in unquoted and double-quoted text,
-  using names that begin with a letter or underscore and continue with letters,
-  digits, or underscores
-- Braced environment-variable expansion with `${NAME}`
-- Previous-command status expansion with `$?`
-- Input redirection with `<` and output redirection with `>` and `>>`
-- Multi-stage pipelines with `|`, last-stage status, redirection precedence,
-  and whole-pipeline job control
-- Foreground process groups and terminal signal handling
-- Terminal-mode preservation across foreground commands and stopped jobs
-- Basic job control with `jobs`, `fg`, and `bg`
-- Non-interactive execution with `-c` and line-oriented batch input
-- XDG-aware system and user startup configuration
-- Login-shell detection and graceful terminal-disconnect cleanup
-- Transactional installation and guarded uninstallation tooling
-- Literal variable text inside single quotes or after a backslash
-- Graceful handling of blank input, EOF, parse errors, and command errors
+- interactive line editing and persistent command history;
+- single and double quotes, backslash escapes, and comments;
+- external programs found through `PATH`;
+- environment variables, including `$NAME` and `${NAME}` expansion;
+- the previous command's status through `$?`;
+- input and output redirection with `<`, `>`, and `>>`;
+- multi-stage pipelines with `|`;
+- foreground process groups and Ctrl-C/Ctrl-Z signal handling;
+- basic job control with `jobs`, `fg`, and `bg`;
+- startup configuration and a customizable prompt;
+- command mode with `-c` and line-oriented batch input; and
+- guarded installation and uninstallation on Linux and macOS.
 
-### Planned
+The detailed guides explain [pipelines](docs/pipelines.md), [redirection](docs/redirection.md),
+[job control](docs/job-control.md), [invocation modes](docs/invocation-modes.md),
+and [startup configuration](docs/startup-configuration.md).
 
-- Human-friendly output formatting
+## Important limitations
 
-See [Safe login-shell installation](docs/installation.md) before registering
-carli in `/etc/shells` or using `chsh`. Keep an authenticated recovery terminal
-open until a separate login succeeds. `carli`'s missing command separators,
-conditionals, and other scripting syntax can break SSH remote
-commands or scripts that assume a POSIX-compatible account shell.
+carli is not compatible with Bash, Zsh, or POSIX shell scripts. It does not yet
+support command separators, conditionals, command substitution, functions,
+loops, globbing, or background launch with `&`. Pipelines do not yet support
+`pipefail` or `|&`.
 
-carli gives each interactive external command or pipeline its own foreground
-process group. Terminal signals such as Ctrl-C and Ctrl-Z therefore affect the job rather
-than carli itself, and carli reclaims the terminal before displaying its next
-prompt. See [Foreground process groups and signals](docs/foreground-process-groups.md)
-for the design, behavior, and current job-control limitations.
+These missing features may break remote SSH commands, scripts, and graphical
+login sessions that expect a POSIX-compatible account shell. Before adding
+carli to `/etc/shells` or using `chsh`, read the
+[safe login-shell installation guide](docs/installation.md). Keep a separate,
+authenticated recovery terminal open while testing a new login.
 
-carli restores its saved terminal attributes after a foreground command exits,
-is terminated, or stops. A stopped job's attributes are saved separately and
-restored when `fg` resumes it. See [Terminal-state preservation and
-restoration](docs/terminal-state-restoration.md) for the recovery guarantees and
-tests.
+## Built-in commands
 
-## Planned output formatting
+carli provides these commands itself:
 
-> **This feature is a design proposal and has not been implemented yet.** The
-> commands and syntax below do not currently work in carli and may change as the
-> design develops.
-
-One of carli's goals is to make structured output pleasant to explore without
-breaking the Unix convention that programs exchange raw data. The guiding rule
-will be: preserve exact output when it is redirected or passed to another
-program, but allow rich presentation when output is intentionally displayed to
-a person in an interactive terminal.
-
-The first planned step is a `view` command for opening structured files:
-
-```sh
-view customers.csv
-view results.json
-view server.log
-```
-
-The viewer could provide aligned and scrollable tables, search, column
-selection, terminal-width-aware layouts, and a way to inspect the original raw
-content. Initial support would focus on CSV, with TSV and JSON following later.
-
-`view` could also act as an explicit final pipeline stage:
-
-```sh
-generate-report | view --csv
-curl example.com/data.json | view --json
-```
-
-A possible future presentation pipe, written `|>`, could make the distinction
-between data transport and human-facing rendering especially clear:
-
-```sh
-generate-report |> table
-git log |> timeline
-cargo test |> test-report
-```
-
-The ordinary `|` pipe continues to transfer unmodified data between
-programs. The proposed `|>` operator would explicitly request formatting for
-interactive display. Formatting would remain opt-in so that redirection,
-scripts, and existing command-line tools continue to behave predictably.
-
-## Available commands
-
-carli currently provides these built-in commands:
-
-- `cd [DIRECTORY]` changes carli's working directory. With no argument, it uses
+- `cd [DIRECTORY]` changes the current directory. With no argument, it uses
   `HOME`.
-- `pwd` prints carli's current working directory.
-- `export NAME=VALUE` adds or updates an environment variable inherited by
-  programs started from carli. `NAME` must begin with a letter or underscore
-  and may then contain letters, digits, or underscores.
-- `which COMMAND` reports whether a command is a carli built-in or prints the
-  first matching file found through `PATH`.
-- `jobs` lists the running and stopped jobs managed by carli.
-- `fg [JOB]` resumes a job in the foreground. With no argument, it selects the
-  most recently created job.
-- `bg [JOB]` resumes a stopped job in the background. With no argument, it
-  selects the most recently created job.
-- `exit [STATUS]` exits carli, optionally with a numeric status from 0 to 255.
+- `pwd` prints the current directory.
+- `export NAME=VALUE` sets an environment variable for carli and programs it
+  starts.
+- `which COMMAND` identifies a built-in or prints the first matching program
+  found through `PATH`.
+- `jobs` lists jobs managed by carli.
+- `fg [JOB]` resumes a job in the foreground.
+- `bg [JOB]` resumes a stopped job in the background.
+- `exit [STATUS]` exits carli with an optional status from 0 to 255.
 
-Job arguments may be written as either `%1` or `1`. See [Basic job
-control](docs/job-control.md) for examples and current limitations.
+Write a job number as either `%1` or `1`. With no job number, `fg` and `bg`
+select the newest job.
 
-Commands that are not built-ins are treated as external programs. For example,
-`ls -al`, `cargo test`, and `printenv HOME` are located through `PATH` and run as
-child processes.
+All other commands are external programs. For example, carli finds and runs
+`ls`, `git`, and `cargo` through `PATH`.
 
-Commands can be connected with pipelines:
+## Pipelines and redirection
+
+Connect programs with `|`:
 
 ```sh
 printf 'beta\nalpha\n' | sort | tr a-z A-Z
 ```
 
-All stages share one process group, `$?` reports the final stage's status, and
-stateful built-ins inside a pipeline run in isolated child processes. See
-[Pipelines](docs/pipelines.md) for redirection precedence, job control, status
-semantics, and current limitations.
+The stages run together as one job. `$?` contains the status of the final
+stage. A built-in inside a pipeline runs in an isolated child process, so a
+command such as `cd /tmp | cat` does not change the main shell's directory.
 
-Run one command without starting an interactive prompt with `-c`:
-
-```sh
-carli -c 'echo "hello from carli"'
-```
-
-When standard input is not a terminal, carli reads and executes one command per
-line without displaying a prompt or loading command history. See [Invocation
-modes](docs/invocation-modes.md) for behavior, exit statuses, and current syntax
-limitations.
-
-carli supports redirecting standard input and standard output:
+Redirect input or output with `<`, `>`, and `>>`:
 
 ```sh
 sort < unsorted.txt > sorted.txt
@@ -196,93 +153,215 @@ echo "another line" >> notes.txt
 pwd > current-directory.txt
 ```
 
-See [Input and output redirection](docs/redirection.md) for syntax, behavior,
-and current limitations.
+See the [pipeline guide](docs/pipelines.md) and
+[redirection guide](docs/redirection.md) for status rules, precedence, and
+limitations.
 
 ## Line editing and history
 
-carli stores command history in `~/.carli_history`. Press the Up and Down Arrow
-keys to move through commands from the current or previous sessions, or use the
-Left and Right Arrow keys to edit the current line before running it.
+carli saves history in `~/.carli_history`.
 
-At the prompt, Ctrl-C cancels the current input and presents a fresh prompt.
-Ctrl-D on an empty line exits carli. History is saved when carli exits through
-either Ctrl-D or the `exit` built-in.
+- Press Up or Down to browse earlier commands.
+- Press Left or Right to edit the current command.
+- Press Ctrl-C to cancel the current input and show a fresh prompt.
+- Press Ctrl-D on an empty line to exit.
+
+History is saved when carli exits through Ctrl-D or the `exit` built-in.
+
+## Jobs, signals, and terminal recovery
+
+Each interactive command or pipeline gets its own foreground process group.
+Ctrl-C and Ctrl-Z therefore affect the running job instead of carli. carli
+reclaims the terminal and restores its saved terminal settings before showing
+the next prompt.
+
+If a job stops, carli remembers its terminal settings and restores them when
+`fg` resumes it. These behaviors are explained in the guides to
+[foreground process groups](docs/foreground-process-groups.md),
+[signal handling](docs/signal-handling.md), and
+[terminal-state restoration](docs/terminal-state-restoration.md).
 
 ## Customizing the prompt
 
-The `CARLI_PROMPT` environment variable controls carli's prompt. Set it from
-inside carli with `export`:
+The `CARLI_PROMPT` environment variable controls the prompt. Set it inside
+carli with `export`:
 
 ```text
-export CARLI_PROMPT="{user}:{dir}$ "
+carli $ export CARLI_PROMPT="{user}:{dir}$ "
 ```
 
-The prompt supports these placeholders:
+The prompt supports four placeholders:
 
-- `{cwd}`: full path to the current working directory
-- `{dir}`: name of the current directory
-- `{user}`: value of the `USER` environment variable
-- `{shell}`: the name `carli`
+- `{cwd}` is the full current directory.
+- `{dir}` is the current directory's name.
+- `{user}` is the value of the `USER` environment variable.
+- `{shell}` is `carli`.
 
 For example:
 
 ```text
-export CARLI_PROMPT="{shell}:{cwd}> "
+carli $ export CARLI_PROMPT="{shell}:{cwd}> "
 ```
 
-carli rebuilds the prompt before reading each command, so `{cwd}` and `{dir}`
-change immediately after `cd`. Unknown placeholders remain unchanged. When
-`CARLI_PROMPT` is not set, carli uses its default prompt.
+carli rebuilds the prompt after each command, so directory placeholders update
+immediately after `cd`. Put the `export` command in carli's user startup file to
+make the change permanent. See [startup configuration](docs/startup-configuration.md)
+for the file location and loading rules.
 
-Prompt customization can be made persistent by placing the corresponding
-`export` command in carli's user startup file. See [Startup
-configuration](docs/startup-configuration.md). The prompt can also be configured
-for a single session when starting carli from another shell:
+## Planned output formatting
+
+> **This feature is only a proposal. The commands and syntax in this section do
+> not work yet and may change.**
+
+One of carli's goals is to make structured output pleasant to explore while
+preserving the Unix convention that programs exchange raw data. A future
+`view` command could display CSV, TSV, JSON, or log data in a searchable,
+terminal-width-aware layout:
 
 ```sh
-CARLI_PROMPT='{user}:{dir}$ ' cargo run
+view customers.csv
+generate-report | view --csv
 ```
 
-## Try it
+A future presentation pipe, written `|>`, could explicitly request
+human-friendly formatting:
 
 ```sh
-cargo run
+generate-report |> table
+git log |> timeline
 ```
 
-Then try:
+The existing `|` operator would continue to transfer unmodified data. Rich
+formatting would remain opt-in so redirection, scripts, and command-line tools
+continue to behave predictably.
 
-```text
-carli $ pwd
-/home/wjgilmore/carli
-carli $ which cargo
-/home/wjgilmore/.cargo/bin/cargo
-carli $ export GREETING=hello
-carli $ printenv GREETING
-hello
-carli $ echo "$GREETING"
-hello
-carli $ echo '$GREETING'
-$GREETING
-carli $ echo "hello from carli"
-hello from carli
-carli $ cd /tmp
-carli $ pwd
-/tmp
-$ carli exit
--> carli git:(master) 
+## Contributing to carli Shell
+
+Contributions are welcome. The steps below let you make and test changes
+without installing carli or making it your login shell.
+
+### What you need
+
+- Rust 1.88 or newer, including `cargo` and `rustfmt`;
+- `python3`, which runs the pseudo-terminal tests; and
+- a Linux or macOS terminal.
+
+Check the installed tools:
+
+```sh
+rustc --version
+cargo --version
+python3 --version
 ```
 
-## Testing
+### Build and run a development copy
 
-Run the complete test suite from the project directory:
+From the repository root, build carli:
+
+```sh
+cargo build
+```
+
+The development executable is `target/debug/carli`. Run it interactively:
+
+```sh
+./target/debug/carli
+```
+
+Or test one command at a time:
+
+```sh
+./target/debug/carli -c 'printf hello | cat'
+```
+
+`cargo run` combines the build and run steps. Arguments after `--` go to carli
+rather than Cargo:
+
+```sh
+cargo run -- -c 'echo "$HOME"'
+```
+
+### Run the tests
+
+Run every committed test with:
 
 ```sh
 cargo test
 ```
 
-Cargo will compile carli and run both its unit and integration tests. The
-integration suite covers command execution, redirection, startup configuration,
-batch mode, history, terminal signals, and job control. The PTY tests require
-`python3`. See [Testing carli](docs/testing.md) for the feature-by-feature
-coverage map and complete verification commands.
+This single command includes unit tests, process-level integration tests, and
+interactive pseudo-terminal tests. The full suite requires `python3`.
+
+To work on one area, filter tests by part of their name:
+
+```sh
+cargo test pipeline
+cargo test redirection
+cargo test job_control
+```
+
+Show the complete test inventory with:
+
+```sh
+cargo test -- --list
+```
+
+If a test fails and its output is hidden, rerun it with output enabled:
+
+```sh
+cargo test pipeline -- --nocapture
+```
+
+The [testing guide](docs/testing.md) maps every advertised feature to its
+automated coverage.
+
+### Debug a problem
+
+First, reduce the problem to a single command when possible:
+
+```sh
+cargo run -- -c 'COMMAND TO INVESTIGATE'
+echo $?
+```
+
+The second line runs in your current shell and prints carli's exit status. A
+status of `0` means success; any other value reports a failure.
+
+Enable Rust panic backtraces while running carli or a test:
+
+```sh
+RUST_BACKTRACE=1 cargo run
+RUST_BACKTRACE=1 cargo test TEST_NAME -- --nocapture
+```
+
+For interactive signal, terminal, or job-control problems, reproduce the issue
+with `target/debug/carli` in a normal terminal. Include the exact commands,
+keys such as Ctrl-C or Ctrl-Z, operating system, and observed output in the bug
+report. Do not test an unfinished change by making it your login shell.
+
+If you need a native debugger, build first and then use the Rust wrapper for
+the debugger installed on your system:
+
+```sh
+rust-gdb target/debug/carli
+# or
+rust-lldb target/debug/carli
+```
+
+### Check a change before submitting it
+
+Run the same local checks used for a release:
+
+```sh
+cargo fmt --check
+cargo test
+cargo clippy --all-targets -- -D warnings
+sh -n scripts/install.sh scripts/uninstall.sh scripts/package-release.sh
+cargo package --locked --allow-dirty
+git diff --check
+```
+
+The source is split into two main files: `src/lib.rs` contains command parsing,
+and `src/main.rs` contains the shell loop, built-ins, process execution, signal
+handling, and job control. Integration tests live in `tests/`, while detailed
+design and safety notes live in `docs/`.
