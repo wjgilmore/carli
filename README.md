@@ -7,6 +7,26 @@ Zsh-compatible scripting shell; review the limitations before changing your
 account shell. Linux and macOS are supported; see [macOS
 support](docs/macos.md) for platform-specific setup and safeguards.
 
+## Installation
+
+Install the `carli-shell` crate with Rust 1.88 or newer:
+
+```sh
+cargo install carli-shell
+```
+
+The package is named `carli-shell` because the `carli` package name was already
+assigned on crates.io. The installed executable and the project itself remain
+named `carli`.
+
+Cargo installs the executable in a user-managed directory. That copy is useful
+for trying `carli`, but it should not be registered directly as a login shell.
+For a stable system path, recovery precautions, and guarded registration in
+`/etc/shells`, follow [Safe login-shell installation](docs/installation.md).
+
+Versioned releases also provide target-specific archives and a `SHA256SUMS`
+manifest. Verify the checksum before extracting an archive.
+
 ## Features
 
 ### Completed
@@ -43,7 +63,7 @@ support](docs/macos.md) for platform-specific setup and safeguards.
 
 See [Safe login-shell installation](docs/installation.md) before registering
 carli in `/etc/shells` or using `chsh`. Keep an authenticated recovery terminal
-open until a separate login succeeds. Carli's missing pipelines, command
+open until a separate login succeeds. `carli`'s missing pipelines, command
 separators, conditionals, and other scripting syntax can break SSH remote
 commands or scripts that assume a POSIX-compatible account shell.
 

@@ -111,7 +111,7 @@ program that cannot correctly own the terminal. After every normal exit,
 signal termination, or stop event, carli attempts to reclaim terminal ownership
 before reading another command.
 
-Terminal ownership and terminal modes are related but distinct. Carli snapshots
+Terminal ownership and terminal modes are related but distinct. `carli` snapshots
 its terminal attributes before transferring ownership and restores them after
 the command exits, is terminated, or stops. It also saves a stopped job's modes
 and reapplies them before sending `SIGCONT` from `fg`. See [Terminal-state

@@ -28,7 +28,7 @@ carli -c 'echo "hello world" > greeting.txt'
 ```
 
 The command uses the same parser, variable expansion, built-ins, redirection,
-and external-program lookup as interactive input. Carli does not display a
+and external-program lookup as interactive input. `carli` does not display a
 prompt or read or write its history file in this mode.
 
 The process exit status is the command's status:
@@ -70,7 +70,7 @@ load history, save history, or perform terminal job-control operations.
 ## Login-shell detection
 
 Unix login programs commonly mark a login shell by placing a leading `-` on
-the executable name in `argv[0]`. Carli detects this form and loads its system
+the executable name in `argv[0]`. `carli` detects this form and loads its system
 and user startup files. Interactive login sessions also use persistent history,
 terminal process groups, terminal-mode restoration, and graceful `SIGHUP`
 cleanup. See [Safe login-shell installation](installation.md).

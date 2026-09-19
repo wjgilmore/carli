@@ -7,7 +7,7 @@ exiting. A shell cannot rely on that behavior: a crash, signal, or suspended
 program can otherwise leave the login terminal in raw mode or with echo
 disabled.
 
-Carli preserves terminal state around every interactive foreground external
+`carli` preserves terminal state around every interactive foreground external
 command. This is an installation-safety feature; it reduces the risk that a
 failed program leaves the only login shell apparently frozen or unusable.
 

@@ -1,7 +1,7 @@
 # Hangup and session shutdown
 
 A login shell must handle loss of its terminal without abandoning children or
-leaving stopped processes behind. Carli treats `SIGHUP` as a request for an
+leaving stopped processes behind. `carli` treats `SIGHUP` as a request for an
 orderly session shutdown.
 
 ## Signal-handler design
@@ -11,7 +11,7 @@ list traversal. It stores a lock-free atomic flag and uses the async-signal-safe
 `raise` operation to wake the line editor when it is blocked waiting for input.
 All cleanup occurs afterward in ordinary Rust control flow.
 
-Carli installs the handler without `SA_RESTART`, allowing a foreground
+`carli` installs the handler without `SA_RESTART`, allowing a foreground
 `waitpid` to return after a hangup. External children restore the default
 `SIGHUP` disposition before execution, so they do not inherit the shell's
 handler.

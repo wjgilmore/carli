@@ -1,6 +1,6 @@
 # macOS support
 
-Carli supports macOS as an interactive shell. Its test suite covers platform
+`carli` supports macOS as an interactive shell. Its test suite covers platform
 differences in process groups, terminal handling, system utilities,
 installation, and uninstallation.
 

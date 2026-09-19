@@ -1,6 +1,6 @@
 # Safe login-shell installation
 
-Carli provides guarded scripts for copying a tested release binary to a stable
+`carli` provides guarded scripts for copying a tested release binary to a stable
 absolute path, registering that exact path in `/etc/shells`, and reversing the
 installation. Follow the recovery procedure below; changing an account shell
 always carries a risk of locking yourself out if the binary or its dependencies
@@ -9,7 +9,7 @@ become unavailable.
 ## Compatibility boundary
 
 Installation safety does not imply Bash, Zsh, or POSIX shell compatibility.
-Carli currently lacks pipelines, command separators, conditionals, command
+`carli` currently lacks pipelines, command separators, conditionals, command
 substitution, functions, loops, globbing, and many standard built-ins. Do not
 use it as the login shell for an account whose SSH commands, file-transfer
 tools, automation, or recovery procedures require that syntax.

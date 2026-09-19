@@ -1,7 +1,34 @@
 [package]
-name = "carli"
+name = "carli-shell"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "A small Unix shell with interactive job control and guarded login-shell installation"
+license = "MIT"
+repository = "https://github.com/wjgilmore/carli"
+homepage = "https://github.com/wjgilmore/carli"
+readme = "README.md"
+keywords = ["shell", "terminal", "command-line", "unix"]
+categories = ["command-line-utilities"]
+include = [
+    "src/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "docs/**",
+    "scripts/**",
+    "tests/**",
+]
+
+[lib]
+name = "carli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "carli"
+path = "src/main.rs"
 
 [dependencies]
 nix = { version = "0.31.3", features = ["fs", "process", "signal", "term"] }

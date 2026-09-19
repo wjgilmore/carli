@@ -64,7 +64,7 @@ If the job was stopped, carli sends `SIGCONT` to its entire process group. The
 job's saved terminal attributes are restored before it continues, so a
 full-screen program resumes in the mode it was using. The job may then exit
 normally, be interrupted with <kbd>Ctrl-C</kbd>, or be stopped again with
-<kbd>Ctrl-Z</kbd>. Carli always attempts to reclaim the terminal and restore its
+<kbd>Ctrl-Z</kbd>. `carli` always attempts to reclaim the terminal and restore its
 own attributes before presenting another prompt.
 
 ## Resuming in the background
@@ -103,7 +103,7 @@ When carli exits, it sends `SIGHUP` and then `SIGCONT` to every remaining job
 process group. `SIGCONT` ensures that a stopped job can observe the hangup
 instead of remaining suspended after its shell disappears.
 
-Carli also catches `SIGHUP` delivered to the shell itself, including terminal
+`carli` also catches `SIGHUP` delivered to the shell itself, including terminal
 disconnects. It wakes a blocked prompt or foreground wait, saves history, hangs
 up foreground, background, and stopped jobs, and exits with status `129`. See
 [Hangup and session shutdown](hangup-shutdown.md).
