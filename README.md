@@ -15,10 +15,6 @@ Install the `carli-shell` crate with Rust 1.88 or newer:
 cargo install carli-shell
 ```
 
-The package is named `carli-shell` because the `carli` package name was already
-assigned on crates.io. The installed executable and the project itself remain
-named `carli`.
-
 Cargo installs the executable in a user-managed directory. That copy is useful
 for trying `carli`, but it should not be registered directly as a login shell.
 For a stable system path, recovery precautions, and guarded registration in
