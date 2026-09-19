@@ -64,7 +64,43 @@ Verify the stable copy and registration:
 grep -Fx /usr/local/bin/carli /etc/shells
 ```
 
-Then change the account shell:
+The first command is intentionally silent when it succeeds. Run it separately
+and inspect its status if you want explicit confirmation:
+
+```sh
+/usr/local/bin/carli -c 'exit 0'
+echo $?
+```
+
+The expected status is `0`. For a visible smoke test, run:
+
+```sh
+/usr/local/bin/carli -c 'echo "carli works"'
+```
+
+## Test without changing your login shell
+
+Installing `carli` and adding it to `/etc/shells` does not change any account's
+login shell. Start it normally from your existing shell to test it as a nested
+interactive session:
+
+```sh
+/usr/local/bin/carli
+```
+
+Try the prompt, `pwd`, `cd`, external commands, an editor such as `vim`, Ctrl-C
+against `sleep 30`, and Ctrl-Z followed by `fg`. When finished, run:
+
+```sh
+exit
+```
+
+This returns to the existing shell. Repeat this testing as often as needed;
+there is no requirement to make `carli` the login shell.
+
+## Make carli the login shell (optional)
+
+Only after the nested-shell tests behave as expected, change the account shell:
 
 ```sh
 chsh -s /usr/local/bin/carli
