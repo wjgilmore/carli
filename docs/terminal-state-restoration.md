@@ -8,17 +8,17 @@ program can otherwise leave the login terminal in raw mode or with echo
 disabled.
 
 `carli` preserves terminal state around every interactive foreground external
-command. This is an installation-safety feature; it reduces the risk that a
+command or pipeline. This is an installation-safety feature; it reduces the risk that a
 failed program leaves the only login shell apparently frozen or unusable.
 
 ## Foreground command lifecycle
 
-Immediately before launching an interactive foreground command, carli reads and
+Immediately before launching an interactive foreground job, carli reads and
 saves its current terminal attributes with `tcgetattr`. After creating the
 child's process group, carli transfers terminal ownership to that group and
 waits for it.
 
-When the command exits normally, is terminated by a signal, or stops, carli:
+When the command or pipeline exits normally, is terminated by a signal, or stops, carli:
 
 1. returns terminal ownership to carli's process group;
 2. restores the saved shell attributes with `tcsetattr(TCSADRAIN)`; and

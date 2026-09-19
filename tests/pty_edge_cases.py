@@ -511,6 +511,82 @@ def scenario_real_pty_disconnect_saves_history():
         assert "printf disconnect-history-marker" in history_file.read()
 
 
+def scenario_pipeline_signals_and_job_control():
+    pid, fd = start()
+    read_until(fd)
+
+    visible = send(fd, "printf 'beta\\nalpha\\n' | sort | tr a-z A-Z")
+    assert b"ALPHA" in visible and b"BETA" in visible, visible
+    assert os.getcwd().encode() in send(fd, "pwd | cat")
+    assert b"still-running" in send(fd, "exit 7 | cat") + send(fd, "printf still-running")
+
+    left_pid_file = os.path.join(HOME, "pipeline-left.pid")
+    right_pid_file = os.path.join(HOME, "pipeline-right.pid")
+    command = (
+        f"sh -c 'echo $$ > {left_pid_file}; sleep 30' | "
+        f"sh -c 'echo $$ > {right_pid_file}; cat'"
+    )
+    stopped = stop_command(fd, command)
+    assert b"[1] Stopped" in stopped, stopped
+    listed = send(fd, "jobs")
+    assert b"sleep 30 | sh -c" in listed, listed
+    assert b"[1]" in send(fd, "bg %1")
+    assert b"Running" in send(fd, "jobs")
+    os.write(fd, b"fg %1\r")
+    interrupt_foreground(fd)
+    assert b"130" in send(fd, "printf %s $?")
+
+    for path, description in [
+        (left_pid_file, "left pipeline stage"),
+        (right_pid_file, "right pipeline stage"),
+    ]:
+        with open(path, encoding="utf-8") as pid_file:
+            wait_process_gone(int(pid_file.read()), description)
+
+    assert_shell_modes_are_canonical_and_echoing(fd)
+    assert exit_shell(pid, fd) == 0
+
+
+def scenario_sighup_cleans_pipeline():
+    left_pid_file = os.path.join(HOME, "sighup-pipeline-left.pid")
+    right_pid_file = os.path.join(HOME, "sighup-pipeline-right.pid")
+    pid, fd = start()
+    read_until(fd)
+    command = (
+        f"sh -c 'echo $$ > {left_pid_file}; sleep 30' | "
+        f"sh -c 'echo $$ > {right_pid_file}; cat'"
+    )
+    os.write(fd, command.encode() + b"\r")
+    deadline = time.monotonic() + 3
+    while not (os.path.exists(left_pid_file) and os.path.exists(right_pid_file)):
+        if time.monotonic() >= deadline:
+            raise AssertionError("pipeline stages did not write their pids")
+        time.sleep(0.02)
+    with open(left_pid_file, encoding="utf-8") as pid_file:
+        left_pid = int(pid_file.read())
+    with open(right_pid_file, encoding="utf-8") as pid_file:
+        right_pid = int(pid_file.read())
+    os.kill(pid, signal.SIGHUP)
+    _, raw_status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(raw_status) == 129
+    wait_process_gone(left_pid, "left pipeline stage")
+    wait_process_gone(right_pid, "right pipeline stage")
+
+
+def scenario_pipeline_partial_exit_while_stopping():
+    pid, fd = start()
+    read_until(fd)
+    stopped = send(fd, "sh -c 'kill -STOP $$' | true")
+    assert b"[1] Stopped" in stopped, stopped
+    listed = send(fd, "jobs")
+    assert b"[1] Stopped" in listed, listed
+    assert b"kill -STOP $$ | true" in listed, listed
+    send(fd, "fg %1")
+    assert b"0" in send(fd, "printf %s $?")
+    assert b"[1]" not in send(fd, "jobs")
+    assert exit_shell(pid, fd) == 0
+
+
 SCENARIOS = {
     "repeated_prompt_interrupts": scenario_repeated_prompt_interrupts,
     "job_selection_errors": scenario_job_selection_errors,
@@ -537,6 +613,9 @@ SCENARIOS = {
     "sighup_cleans_background_job": scenario_sighup_cleans_background_job,
     "sighup_cleans_foreground_job": scenario_sighup_cleans_foreground_job,
     "real_pty_disconnect_saves_history": scenario_real_pty_disconnect_saves_history,
+    "pipeline_signals_and_job_control": scenario_pipeline_signals_and_job_control,
+    "sighup_cleans_pipeline": scenario_sighup_cleans_pipeline,
+    "pipeline_partial_exit_while_stopping": scenario_pipeline_partial_exit_while_stopping,
 }
 
 try:

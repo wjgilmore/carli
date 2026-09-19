@@ -43,6 +43,7 @@ coverage:
 | `${NAME}` expansion | Unquoted, double-quoted, single-quoted, invalid, and unclosed cases in `src/lib.rs` |
 | `$?` expansion | Parser quoting tests plus external, built-in, parse, Ctrl-C, Ctrl-\\, and startup statuses across integration tests |
 | `<`, `>`, and `>>` redirection | Parser syntax plus real input, truncate, append, quoted paths, built-in output, and all documented failures across both non-interactive integration files |
+| Pipelines with `|` | Parser boundaries, quoting, multi-stage flow, large-output deadlock prevention, last-stage status, startup failures, built-in isolation, redirection precedence, whole-group Ctrl-C/Ctrl-Z, `jobs`/`fg`/`bg`, terminal recovery, and SIGHUP cleanup across unit, process, and PTY tests |
 | Foreground process groups and terminal signals | Prompt Ctrl-C, foreground Ctrl-C/Ctrl-\\, Ctrl-Z, shell survival, and terminal return in `tests/pty_features.py` |
 | Terminal-mode preservation | Exact termios snapshots, normal exit, signal termination, repeated stops, `bg`→`fg`, shell recovery, and job-mode restoration in isolated `tests/pty_edge_cases.py` scenarios |
 | `jobs`, `fg`, and `bg` | Stopped/running states, output success/failure, percent/numeric/default selectors, multiple jobs, repeated lifecycle transitions, completion, and errors in PTY tests |

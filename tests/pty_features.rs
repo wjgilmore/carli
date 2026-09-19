@@ -171,3 +171,24 @@ fn real_terminal_disconnect_saves_history_and_exits_129() {
         Some("real_pty_disconnect_saves_history"),
     );
 }
+
+#[test]
+fn pipelines_share_signal_and_job_control() {
+    run_pty_scenario(
+        "pty_edge_cases.py",
+        Some("pipeline_signals_and_job_control"),
+    );
+}
+
+#[test]
+fn sighup_cleans_up_every_pipeline_stage() {
+    run_pty_scenario("pty_edge_cases.py", Some("sighup_cleans_pipeline"));
+}
+
+#[test]
+fn pipeline_is_saved_when_other_stages_exit_while_one_stops() {
+    run_pty_scenario(
+        "pty_edge_cases.py",
+        Some("pipeline_partial_exit_while_stopping"),
+    );
+}

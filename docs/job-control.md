@@ -15,8 +15,8 @@ carli $ sleep 300
 carli $
 ```
 
-carli assigns the stopped command a numeric job ID, records its process ID and
-process group, reclaims the terminal, and displays a new prompt. The value of
+carli assigns the stopped command or pipeline a numeric job ID, records its
+remaining process IDs and process group, reclaims the terminal, and displays a new prompt. The value of
 `$?` is `128 + stop_signal`; for `SIGTSTP`, that is normally `148`.
 
 ## Listing jobs
@@ -115,7 +115,6 @@ This is basic job control. The following features are not implemented yet:
 - launching a new command directly in the background with `&`;
 - `%+`, `%-`, and textual job selectors;
 - job markers and the complete formatting used by Bash or Zsh;
-- pipelines containing multiple processes in one job; and
 - immediate asynchronous notifications while the line editor is waiting for
   input.
 

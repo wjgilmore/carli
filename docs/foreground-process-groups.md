@@ -1,7 +1,7 @@
 # Foreground process groups and signals
 
-carli isolates every interactive external command in its own Unix process
-group and temporarily gives that group control of the terminal. This prevents
+carli isolates every interactive external command or pipeline in its own Unix
+process group and temporarily gives that group control of the terminal. This prevents
 terminal-generated signals intended for a command from also interrupting or
 suspending the shell.
 
@@ -32,20 +32,22 @@ Terminal                   Terminal                     Terminal
                              +-- carli (waiting)
 ```
 
-For each interactive external command, carli performs these steps:
+For each interactive external command or pipeline, carli performs these steps:
 
-1. Fork and prepare the child process.
-2. Create a process group whose ID is the child's process ID.
-3. Restore default signal behavior in the child.
-4. Assign the terminal to the child's process group with `tcsetpgrp`.
-5. Wait for the child to exit, be terminated, or stop.
+1. Fork and prepare every stage.
+2. Create a process group whose ID is the first child's process ID and join
+   every later stage to it.
+3. Restore default signal behavior in every child.
+4. Assign the terminal to the job's process group with `tcsetpgrp`.
+5. Wait for every child to exit, be terminated, or for the whole job to stop.
 6. Assign the terminal back to carli's process group.
 7. Restore carli's saved terminal attributes.
-8. Record the result for `$?` and display the next prompt.
+8. Record the final pipeline stage's result for `$?` and display the next
+   prompt.
 
-The child and parent both attempt to establish the child process group. Doing
-so on both sides closes the race in which either process might run first after
-the fork.
+Each child and the parent both attempt to establish process-group membership.
+Doing so on both sides closes the race in which either process might run first
+after the fork.
 
 ## Signal behavior
 
@@ -62,9 +64,9 @@ command, so <kbd>Ctrl-C</kbd> still cancels the current input and produces a
 fresh prompt.
 
 Before an external program begins, carli restores the default disposition for
-all five signals in the child. Once the child owns the terminal, controls such
+all five signals in the child. Once the job owns the terminal, controls such
 as <kbd>Ctrl-C</kbd> and <kbd>Ctrl-Z</kbd> therefore affect the child process
-group and not carli.
+group and not carli. For pipelines, this reaches every stage simultaneously.
 
 ## Exit and signal statuses
 

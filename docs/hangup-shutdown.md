@@ -39,11 +39,13 @@ Separate pseudo-terminal tests deliver `SIGHUP` while carli is:
 
 - blocked at its prompt;
 - waiting for a foreground job;
+- waiting for a multi-stage foreground pipeline;
 - tracking a running background job; and
 - tracking a stopped job.
 
 Another test closes the PTY master to exercise a real controlling-terminal
 disconnect rather than directly signaling the shell.
 
-The tests verify status `129`, saved history, and disappearance of every child.
+The tests verify status `129`, saved history, and disappearance of every child,
+including every pipeline stage.
 Run them through the complete suite with `cargo test`.

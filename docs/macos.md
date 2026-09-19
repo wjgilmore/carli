@@ -84,8 +84,8 @@ login with the restored shell succeeds.
 
 macOS support means carli builds, its automated behavior suite passes, and its
 guarded installer understands macOS. It does not make carli compatible with
-Bash, Zsh, or POSIX shell scripts. Pipelines, command separators, conditionals,
-command substitution, functions, loops, and globbing remain unsupported.
+Bash, Zsh, or POSIX shell scripts. Command separators, conditionals, command
+substitution, functions, loops, and globbing remain unsupported.
 Programs and remote-login workflows that assume those features can still fail;
 test the actual workflow before making carli the login shell for an important
 account.

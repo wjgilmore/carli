@@ -6,6 +6,12 @@ All notable changes to `carli` are documented in this file. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Multi-stage pipelines with `|`, last-stage status semantics, per-stage
+  redirection, isolated built-ins, shared process groups, and complete
+  foreground job control.
+
 ## [0.1.0] - 2026-09-18
 
 ### Added

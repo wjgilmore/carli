@@ -125,6 +125,123 @@ fn previous_status_and_builtin_failures_work_end_to_end() {
 }
 
 #[test]
+fn pipelines_connect_multiple_external_commands() {
+    let output = carli()
+        .args([
+            "-c",
+            "printf 'beta\\nalpha\\n' | sort | tr '[:lower:]' '[:upper:]'",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"ALPHA\nBETA\n");
+}
+
+#[test]
+fn pipeline_status_comes_from_the_last_stage() {
+    let output = carli()
+        .args(["-c", "sh -c 'exit 9' | sh -c 'exit 4'"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(4));
+
+    let mut command = carli();
+    let output = run_with_input(
+        &mut command,
+        "sh -c 'exit 23' | true\nprintf 'pipeline-status=%s' $?\n",
+    );
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"pipeline-status=0");
+}
+
+#[test]
+fn builtins_in_pipelines_run_without_changing_parent_shell_state() {
+    let directory = TestDirectory::new("pipeline-builtins");
+    let mut command = carli();
+    command.current_dir(directory.path());
+    let output = run_with_input(
+        &mut command,
+        "pwd | cat\ncd /tmp | cat\npwd\nexport PIPELINE_ONLY=value | cat\nprintenv PIPELINE_ONLY\nexit 7 | cat\nprintf survived\n",
+    );
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected_directory = directory.path().display().to_string();
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            expected_directory.as_str(),
+            expected_directory.as_str(),
+            "survived"
+        ]
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("command not found"));
+
+    let mut command = carli();
+    let output = run_with_input(
+        &mut command,
+        "sh -c 'exit 42'\nprintf ignored | exit\nprintf '%s' $?\n",
+    );
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42");
+}
+
+#[test]
+fn pipeline_redirections_override_pipe_endpoints() {
+    let directory = TestDirectory::new("pipeline-redirections");
+    let input = directory.path().join("input");
+    let output_path = directory.path().join("output");
+    fs::write(&input, "from-file\n").unwrap();
+
+    let command = format!(
+        "printf from-pipe | cat < {} | tr a-z A-Z > {}",
+        input.display(),
+        output_path.display()
+    );
+    let output = carli().args(["-c", &command]).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(fs::read_to_string(output_path).unwrap(), "FROM-FILE\n");
+}
+
+#[test]
+fn invalid_pipeline_syntax_is_status_two() {
+    for line in ["| cat", "cat |", "cat || sort", "cat | > output"] {
+        let output = carli().args(["-c", line]).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "line: {line}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("pipeline stage has no command"));
+    }
+}
+
+#[test]
+fn pipeline_start_failures_still_run_other_stages() {
+    let output = carli()
+        .args(["-c", "carli-command-that-does-not-exist | cat"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("command not found"));
+
+    let output = carli()
+        .args(["-c", "printf ignored | carli-command-that-does-not-exist"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(127));
+}
+
+#[test]
+fn pipelines_do_not_deadlock_on_output_larger_than_pipe_capacity() {
+    let output = carli()
+        .args([
+            "-c",
+            "python3 -c 'import sys; sys.stdout.write(\"x\" * 1000000)' | wc -c",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1000000");
+}
+
+#[test]
 fn startup_configuration_uses_xdg_and_isolates_automation() {
     let directory = TestDirectory::new("startup");
     let home = directory.path().join("home");

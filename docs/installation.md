@@ -9,8 +9,8 @@ become unavailable.
 ## Compatibility boundary
 
 Installation safety does not imply Bash, Zsh, or POSIX shell compatibility.
-`carli` currently lacks pipelines, command separators, conditionals, command
-substitution, functions, loops, globbing, and many standard built-ins. Do not
+`carli` currently lacks command separators, conditionals, command substitution,
+functions, loops, globbing, and many standard built-ins. Do not
 use it as the login shell for an account whose SSH commands, file-transfer
 tools, automation, or recovery procedures require that syntax.
 

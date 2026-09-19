@@ -3,19 +3,23 @@ use nix::libc;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet, Signal, killpg};
 use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
 use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
-use nix::unistd::{Pid, getpgrp, getpid, setpgid, tcgetpgrp, tcsetpgrp};
+use nix::unistd::{Pid, getpgrp, getpid, pipe, setpgid, tcgetpgrp, tcsetpgrp};
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{BufRead, IsTerminal, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
+#[cfg(test)]
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use carli::{OutputRedirection, ParseError, parse_command_line_with_status};
+extern crate carli as carli_lib;
+
+use carli_lib::{OutputRedirection, ParseError, ParsedCommand, parse_pipeline_with_status};
 
 static HANGUP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -37,7 +41,10 @@ enum JobState {
 
 struct Job {
     id: usize,
-    pid: Pid,
+    pids: Vec<Pid>,
+    status_pid: Pid,
+    status: Option<i32>,
+    stopped_pids: Vec<Pid>,
     process_group: Pid,
     command: String,
     state: JobState,
@@ -59,6 +66,8 @@ enum CommandOutcome {
 
 struct Invocation {
     command: Option<String>,
+    pipeline_builtin: Option<(Vec<String>, i32)>,
+    pipeline_status: Option<u8>,
     login_shell: bool,
 }
 
@@ -77,7 +86,10 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         }
     };
-    let interactive = invocation.command.is_none() && io::stdin().is_terminal();
+    let interactive = invocation.command.is_none()
+        && invocation.pipeline_builtin.is_none()
+        && invocation.pipeline_status.is_none()
+        && io::stdin().is_terminal();
     let (shell_process_group, shell_terminal_modes) = if interactive {
         match setup_interactive_shell() {
             Ok(state) => (state.0, Some(state.1)),
@@ -96,6 +108,18 @@ fn main() -> std::process::ExitCode {
         jobs: Vec::new(),
         next_job_id: 1,
     };
+
+    if let Some((words, previous_status)) = invocation.pipeline_builtin {
+        let status = match execute_builtin(&words, previous_status, &mut job_control, None) {
+            Some(CommandOutcome::Status(status)) => status_to_u8(status),
+            Some(CommandOutcome::Exit(status)) => status,
+            None => 127,
+        };
+        return std::process::ExitCode::from(status);
+    }
+    if let Some(status) = invocation.pipeline_status {
+        return std::process::ExitCode::from(status);
+    }
 
     let startup_outcome = if interactive || invocation.login_shell {
         ensure_default_path();
@@ -129,6 +153,55 @@ fn parse_invocation() -> Result<Invocation, String> {
         .is_some_and(|name| name.to_string_lossy().starts_with('-'));
     let arguments: Vec<_> = arguments.collect();
 
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--pipeline-builtin")
+    {
+        let Some(status) = arguments.get(1) else {
+            return Err("invalid internal pipeline built-in invocation".to_string());
+        };
+        let previous_status = status
+            .to_string_lossy()
+            .parse::<i32>()
+            .map_err(|_| "invalid internal pipeline built-in status".to_string())?;
+        let words = arguments[2..]
+            .iter()
+            .cloned()
+            .map(|word| {
+                word.into_string()
+                    .map_err(|_| "pipeline built-in argument is not valid UTF-8".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if words.is_empty() || !is_builtin(&words[0]) {
+            return Err("invalid internal pipeline built-in invocation".to_string());
+        }
+        return Ok(Invocation {
+            command: None,
+            pipeline_builtin: Some((words, previous_status)),
+            pipeline_status: None,
+            login_shell: false,
+        });
+    }
+
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--pipeline-status")
+    {
+        let [_, status] = arguments.as_slice() else {
+            return Err("invalid internal pipeline status invocation".to_string());
+        };
+        let status = status
+            .to_string_lossy()
+            .parse::<u8>()
+            .map_err(|_| "invalid internal pipeline status".to_string())?;
+        return Ok(Invocation {
+            command: None,
+            pipeline_builtin: None,
+            pipeline_status: Some(status),
+            login_shell: false,
+        });
+    }
+
     let command = match arguments.as_slice() {
         [] => None,
         [flag, command] if flag == "-c" => Some(
@@ -148,6 +221,8 @@ fn parse_invocation() -> Result<Invocation, String> {
 
     Ok(Invocation {
         command,
+        pipeline_builtin: None,
+        pipeline_status: None,
         login_shell,
     })
 }
@@ -334,8 +409,8 @@ fn execute_line_from(
     job_control: &mut JobControl,
     source: Option<(&std::path::Path, usize)>,
 ) -> CommandOutcome {
-    let parsed = match parse_command_line_with_status(line, last_status) {
-        Ok(parsed) => parsed,
+    let pipeline = match parse_pipeline_with_status(line, last_status) {
+        Ok(pipeline) => pipeline,
         Err(error) => {
             match source {
                 Some((path, line_number)) => {
@@ -346,11 +421,20 @@ fn execute_line_from(
             return CommandOutcome::Status(2);
         }
     };
-    if parsed.words.is_empty() {
+    if pipeline.commands.is_empty() {
         return CommandOutcome::Status(last_status);
     }
 
-    let input = match parsed.input.as_deref().map(File::open).transpose() {
+    if pipeline.commands.len() > 1 {
+        return CommandOutcome::Status(run_pipeline(pipeline.commands, last_status, job_control));
+    }
+
+    let parsed = pipeline.commands.into_iter().next().unwrap();
+    if !is_builtin(&parsed.words[0]) {
+        return CommandOutcome::Status(run_pipeline(vec![parsed], last_status, job_control));
+    }
+
+    let _input = match parsed.input.as_deref().map(File::open).transpose() {
         Ok(input) => input,
         Err(error) => {
             let path = parsed.input.as_deref().unwrap_or_default();
@@ -367,23 +451,33 @@ fn execute_line_from(
         }
     };
 
-    let status = match parsed.words[0].as_str() {
-        "cd" => change_directory(&parsed.words[1..]),
+    execute_builtin(&parsed.words, last_status, job_control, output.as_mut())
+        .expect("the command was identified as a built-in")
+}
+
+fn execute_builtin(
+    words: &[String],
+    last_status: i32,
+    job_control: &mut JobControl,
+    output: Option<&mut File>,
+) -> Option<CommandOutcome> {
+    let status = match words[0].as_str() {
+        "cd" => change_directory(&words[1..]),
         "exit" => {
-            return match exit_status(&parsed.words[1..], last_status) {
+            return Some(match exit_status(&words[1..], last_status) {
                 Ok(status) => CommandOutcome::Exit(status),
                 Err(status) => CommandOutcome::Status(status),
-            };
+            });
         }
-        "export" => export_variable(&parsed.words[1..]),
-        "pwd" => print_working_directory(&parsed.words[1..], output.as_mut()),
-        "which" => which(&parsed.words[1..], output.as_mut()),
-        "jobs" => list_jobs(&parsed.words[1..], &job_control.jobs, output.as_mut()),
-        "fg" => foreground_job(&parsed.words[1..], job_control, output.as_mut()),
-        "bg" => background_job(&parsed.words[1..], job_control, output.as_mut()),
-        program => run_external(program, &parsed.words[1..], input, output, job_control),
+        "export" => export_variable(&words[1..]),
+        "pwd" => print_working_directory(&words[1..], output),
+        "which" => which(&words[1..], output),
+        "jobs" => list_jobs(&words[1..], &job_control.jobs, output),
+        "fg" => foreground_job(&words[1..], job_control, output),
+        "bg" => background_job(&words[1..], job_control, output),
+        _ => return None,
     };
-    CommandOutcome::Status(status)
+    Some(CommandOutcome::Status(status))
 }
 
 fn outcome_status(outcome: CommandOutcome) -> u8 {
@@ -599,6 +693,7 @@ fn foreground_job(
         }
         job.state = JobState::Running;
     }
+    job.stopped_pids.clear();
 
     let status = wait_for_foreground_job(job, &mut job_control.jobs, &mut job_control.next_job_id);
     if let Err(error) = reclaim_terminal(job_control) {
@@ -633,6 +728,7 @@ fn background_job(
         return 1;
     }
     job.state = JobState::Running;
+    job.stopped_pids.clear();
     write_output(output, &format!("[{}] {}", job.id, job.command))
 }
 
@@ -723,92 +819,191 @@ fn build_prompt() -> String {
         .replace("{shell}", "carli")
 }
 
-fn run_external(
-    program: &str,
-    arguments: &[String],
-    input: Option<File>,
-    output: Option<File>,
+fn run_pipeline(
+    commands: Vec<ParsedCommand>,
+    previous_status: i32,
     job_control: &mut JobControl,
 ) -> i32 {
     if job_control.interactive
         && let Err(error) = refresh_shell_terminal_modes(job_control)
     {
-        eprintln!("carli: {program}: could not save terminal modes: {error}");
+        eprintln!("carli: could not save terminal modes: {error}");
         return 1;
     }
 
-    let mut command = Command::new(program);
-    command.args(arguments);
-    if let Some(input) = input {
-        command.stdin(Stdio::from(input));
-    }
-    if let Some(output) = output {
-        command.stdout(Stdio::from(output));
+    let command_text = commands
+        .iter()
+        .map(|command| command.words.join(" "))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let mut stage_files = Vec::with_capacity(commands.len());
+    for parsed in &commands {
+        let input = match parsed.input.as_deref().map(File::open).transpose() {
+            Ok(input) => input,
+            Err(error) => {
+                eprintln!(
+                    "carli: {}: {error}",
+                    parsed.input.as_deref().unwrap_or_default()
+                );
+                return 1;
+            }
+        };
+        let output = match parsed.output.as_ref().map(open_output).transpose() {
+            Ok(output) => output,
+            Err(error) => {
+                eprintln!("carli: {}: {error}", output_path(parsed.output.as_ref()));
+                return 1;
+            }
+        };
+        stage_files.push((input, output));
     }
 
-    if job_control.interactive {
+    let executable = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => {
+            eprintln!("carli: could not locate its executable: {error}");
+            return 1;
+        }
+    };
+    let mut previous_read = None;
+    let mut process_group = None;
+    let mut pids = Vec::with_capacity(commands.len());
+    let command_count = commands.len();
+
+    for (index, (parsed, (explicit_input, explicit_output))) in
+        commands.into_iter().zip(stage_files).enumerate()
+    {
+        let last_stage = index + 1 == command_count;
+        let (next_read, next_write) = if last_stage {
+            (None, None)
+        } else {
+            match pipe() {
+                Ok((read, write)) => (Some(read), Some(write)),
+                Err(error) => {
+                    eprintln!("carli: could not create pipeline: {error}");
+                    terminate_pipeline(process_group, &pids);
+                    return 1;
+                }
+            }
+        };
+
+        let program = &parsed.words[0];
+        let mut command = if is_builtin(program) {
+            let mut command = Command::new(&executable);
+            command
+                .arg("--pipeline-builtin")
+                .arg(previous_status.to_string())
+                .args(&parsed.words);
+            command
+        } else {
+            match resolve_external_program(program) {
+                Ok(path) => {
+                    let mut command = Command::new(path);
+                    command.args(&parsed.words[1..]);
+                    command
+                }
+                Err(status) => {
+                    let message = if status == 127 {
+                        "command not found"
+                    } else {
+                        "command is not executable"
+                    };
+                    eprintln!("carli: {program}: {message}");
+                    let mut command = Command::new(&executable);
+                    command.arg("--pipeline-status").arg(status.to_string());
+                    command
+                }
+            }
+        };
+
+        if let Some(input) = explicit_input {
+            command.stdin(Stdio::from(input));
+            drop(previous_read.take());
+        } else if let Some(input) = previous_read.take() {
+            command.stdin(Stdio::from(input));
+        }
+        if let Some(output) = explicit_output {
+            command.stdout(Stdio::from(output));
+            drop(next_write);
+        } else if let Some(output) = next_write {
+            command.stdout(Stdio::from(output));
+        }
+
+        let requested_group = process_group;
+        let interactive = job_control.interactive;
         // SAFETY: Only async-signal-safe operations are performed between fork
-        // and exec. The child creates its process group and restores the signal
-        // dispositions expected by an ordinary foreground program.
+        // and exec. Every stage joins the pipeline process group, and children
+        // of an interactive shell restore ordinary terminal signal handling.
         unsafe {
-            command.pre_exec(|| {
-                setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(errno_to_io)?;
-                for signal in child_signals() {
-                    signal::signal(signal, SigHandler::SigDfl).map_err(errno_to_io)?;
+            command.pre_exec(move || {
+                setpgid(
+                    Pid::from_raw(0),
+                    requested_group.unwrap_or(Pid::from_raw(0)),
+                )
+                .map_err(errno_to_io)?;
+                if interactive {
+                    for signal in child_signals() {
+                        signal::signal(signal, SigHandler::SigDfl).map_err(errno_to_io)?;
+                    }
                 }
                 Ok(())
             });
         }
-    }
 
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            eprintln!("carli: {program}: command not found");
-            return 127;
-        }
-        Err(error) => {
-            eprintln!("carli: {program}: {error}");
-            return 126;
-        }
-    };
-
-    if !job_control.interactive {
-        return match child.wait() {
-            Ok(status) => exit_status_from_process(status),
+        let mut child = match command.spawn() {
+            Ok(child) => child,
             Err(error) => {
-                eprintln!("carli: {program}: could not wait for command: {error}");
-                1
+                let status = if error.kind() == io::ErrorKind::NotFound {
+                    eprintln!("carli: {program}: command not found");
+                    127
+                } else {
+                    eprintln!("carli: {program}: {error}");
+                    126
+                };
+                drop(next_read);
+                terminate_pipeline(process_group, &pids);
+                return status;
             }
         };
+
+        let child_pid = Pid::from_raw(child.id() as i32);
+        let group = process_group.unwrap_or(child_pid);
+        if let Err(error) = setpgid(child_pid, group)
+            && error != Errno::EACCES
+        {
+            eprintln!("carli: {program}: could not join pipeline process group: {error}");
+            let _ = signal::kill(child_pid, Signal::SIGKILL);
+            let _ = child.wait();
+            drop(next_read);
+            terminate_pipeline(process_group, &pids);
+            return 1;
+        }
+        process_group = Some(group);
+        pids.push(child_pid);
+        previous_read = next_read;
     }
 
-    let child_pid = Pid::from_raw(child.id() as i32);
-    if let Err(error) = setpgid(child_pid, child_pid)
-        && error != Errno::EACCES
-    {
-        eprintln!("carli: {program}: could not create process group: {error}");
-        let _ = killpg(child_pid, Signal::SIGKILL);
-        let _ = child.wait();
+    if !job_control.interactive {
+        return wait_for_pipeline(&pids);
+    }
+
+    let process_group = process_group.expect("a pipeline has at least one process");
+    let status_pid = *pids.last().unwrap();
+
+    if let Err(error) = tcsetpgrp(io::stdin(), process_group) {
+        eprintln!("carli: could not give pipeline the terminal: {error}");
+        terminate_pipeline(Some(process_group), &pids);
         return 1;
     }
 
-    if let Err(error) = tcsetpgrp(io::stdin(), child_pid) {
-        eprintln!("carli: {program}: could not give command the terminal: {error}");
-        let _ = killpg(child_pid, Signal::SIGKILL);
-        let _ = child.wait();
-        return 1;
-    }
-
-    let command_text = std::iter::once(program)
-        .chain(arguments.iter().map(String::as_str))
-        .collect::<Vec<_>>()
-        .join(" ");
     let result = wait_for_foreground_job(
         Job {
             id: 0,
-            pid: child_pid,
-            process_group: child_pid,
+            pids,
+            status_pid,
+            status: None,
+            stopped_pids: Vec::new(),
+            process_group,
             command: command_text,
             state: JobState::Running,
             terminal_modes: None,
@@ -818,11 +1013,79 @@ fn run_external(
     );
 
     if let Err(error) = reclaim_terminal(job_control) {
-        eprintln!("carli: {program}: could not restore the terminal: {error}");
+        eprintln!("carli: could not restore the terminal: {error}");
         return 1;
     }
 
     result
+}
+
+fn resolve_external_program(program: &str) -> Result<PathBuf, u8> {
+    if program.contains('/') {
+        let path = PathBuf::from(program);
+        return match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 => {
+                Ok(path)
+            }
+            Ok(_) => Err(126),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(127),
+            Err(_) => Err(126),
+        };
+    }
+
+    let Some(path) = std::env::var_os("PATH") else {
+        return Err(127);
+    };
+    let mut found_non_executable = false;
+    for directory in std::env::split_paths(&path) {
+        let candidate = directory.join(program);
+        match std::fs::metadata(&candidate) {
+            Ok(metadata) if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 => {
+                return Ok(candidate);
+            }
+            Ok(metadata) if metadata.is_file() => found_non_executable = true,
+            _ => {}
+        }
+    }
+    Err(if found_non_executable { 126 } else { 127 })
+}
+
+fn terminate_pipeline(process_group: Option<Pid>, pids: &[Pid]) {
+    if let Some(process_group) = process_group {
+        let _ = killpg(process_group, Signal::SIGKILL);
+    }
+    for pid in pids {
+        let _ = waitpid(*pid, None);
+    }
+}
+
+fn wait_for_pipeline(pids: &[Pid]) -> i32 {
+    let status_pid = *pids.last().unwrap();
+    let mut status = 1;
+    for pid in pids {
+        loop {
+            match waitpid(*pid, None) {
+                Ok(WaitStatus::Exited(waited, code)) => {
+                    if waited == status_pid {
+                        status = code;
+                    }
+                    break;
+                }
+                Ok(WaitStatus::Signaled(waited, signal, _)) => {
+                    if waited == status_pid {
+                        status = 128 + signal as i32;
+                    }
+                    break;
+                }
+                Ok(_) | Err(Errno::EINTR) => continue,
+                Err(error) => {
+                    eprintln!("carli: could not wait for pipeline stage {pid}: {error}");
+                    break;
+                }
+            }
+        }
+    }
+    status
 }
 
 fn setup_interactive_shell() -> io::Result<(Pid, Termios)> {
@@ -911,27 +1174,35 @@ fn child_signals() -> [Signal; 6] {
 
 fn wait_for_foreground_job(mut job: Job, jobs: &mut Vec<Job>, next_job_id: &mut usize) -> i32 {
     loop {
-        match waitpid(job.pid, Some(WaitPidFlag::WUNTRACED)) {
-            Ok(WaitStatus::Exited(_, status)) => return status,
-            Ok(WaitStatus::Signaled(_, signal, _)) => return 128 + signal as i32,
-            Ok(WaitStatus::Stopped(_, signal)) => {
-                if job.id == 0 {
-                    job.id = *next_job_id;
-                    *next_job_id += 1;
+        match waitpid(
+            Pid::from_raw(-job.process_group.as_raw()),
+            Some(WaitPidFlag::WUNTRACED),
+        ) {
+            Ok(WaitStatus::Exited(pid, status)) => {
+                record_pipeline_status(&mut job, pid, status);
+                if job.pids.is_empty() {
+                    return job.status.unwrap_or(1);
                 }
-                job.state = JobState::Stopped;
-                match tcgetattr(io::stdin()) {
-                    Ok(modes) => job.terminal_modes = Some(modes),
-                    Err(error) => {
-                        eprintln!(
-                            "carli: could not save terminal modes for {}: {error}",
-                            job.command
-                        )
-                    }
+                if all_remaining_stages_stopped(&job) {
+                    return save_stopped_job(job, jobs, next_job_id, Signal::SIGTSTP);
                 }
-                eprintln!("[{}] Stopped {}", job.id, job.command);
-                jobs.push(job);
-                return 128 + signal as i32;
+            }
+            Ok(WaitStatus::Signaled(pid, signal, _)) => {
+                record_pipeline_status(&mut job, pid, 128 + signal as i32);
+                if job.pids.is_empty() {
+                    return job.status.unwrap_or(1);
+                }
+                if all_remaining_stages_stopped(&job) {
+                    return save_stopped_job(job, jobs, next_job_id, Signal::SIGTSTP);
+                }
+            }
+            Ok(WaitStatus::Stopped(pid, signal)) => {
+                if !job.stopped_pids.contains(&pid) {
+                    job.stopped_pids.push(pid);
+                }
+                if all_remaining_stages_stopped(&job) {
+                    return save_stopped_job(job, jobs, next_job_id, signal);
+                }
             }
             Ok(WaitStatus::Continued(_) | WaitStatus::StillAlive) => {}
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -949,34 +1220,96 @@ fn wait_for_foreground_job(mut job: Job, jobs: &mut Vec<Job>, next_job_id: &mut 
     }
 }
 
+fn all_remaining_stages_stopped(job: &Job) -> bool {
+    !job.pids.is_empty() && job.stopped_pids.len() == job.pids.len()
+}
+
+fn save_stopped_job(
+    mut job: Job,
+    jobs: &mut Vec<Job>,
+    next_job_id: &mut usize,
+    signal: Signal,
+) -> i32 {
+    if job.id == 0 {
+        job.id = *next_job_id;
+        *next_job_id += 1;
+    }
+    job.state = JobState::Stopped;
+    match tcgetattr(io::stdin()) {
+        Ok(modes) => job.terminal_modes = Some(modes),
+        Err(error) => eprintln!(
+            "carli: could not save terminal modes for {}: {error}",
+            job.command
+        ),
+    }
+    eprintln!("[{}] Stopped {}", job.id, job.command);
+    jobs.push(job);
+    128 + signal as i32
+}
+
+fn record_pipeline_status(job: &mut Job, pid: Pid, status: i32) {
+    if pid == job.status_pid {
+        job.status = Some(status);
+    }
+    job.pids.retain(|candidate| *candidate != pid);
+    job.stopped_pids.retain(|candidate| *candidate != pid);
+}
+
 fn reap_jobs(jobs: &mut Vec<Job>) {
     jobs.retain_mut(|job| {
-        match waitpid(
-            job.pid,
-            Some(WaitPidFlag::WNOHANG | WaitPidFlag::WUNTRACED | WaitPidFlag::WCONTINUED),
-        ) {
-            Ok(WaitStatus::Exited(_, status)) => {
-                eprintln!("[{}] Done ({status}) {}", job.id, job.command);
-                false
+        loop {
+            match waitpid(
+                Pid::from_raw(-job.process_group.as_raw()),
+                Some(WaitPidFlag::WNOHANG | WaitPidFlag::WUNTRACED | WaitPidFlag::WCONTINUED),
+            ) {
+                Ok(WaitStatus::Exited(pid, status)) => {
+                    record_pipeline_status(job, pid, status);
+                }
+                Ok(WaitStatus::Signaled(pid, signal, _)) => {
+                    record_pipeline_status(job, pid, 128 + signal as i32);
+                }
+                Ok(WaitStatus::Stopped(pid, _)) => {
+                    if !job.stopped_pids.contains(&pid) {
+                        job.stopped_pids.push(pid);
+                    }
+                    if job.stopped_pids.len() == job.pids.len() {
+                        job.state = JobState::Stopped;
+                    }
+                }
+                Ok(WaitStatus::Continued(pid)) => {
+                    job.stopped_pids.retain(|candidate| *candidate != pid);
+                    job.state = JobState::Running;
+                }
+                Ok(WaitStatus::StillAlive) => break,
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                Ok(WaitStatus::PtraceEvent(_, _, _) | WaitStatus::PtraceSyscall(_)) => {}
+                Err(Errno::ECHILD) => {
+                    job.pids.clear();
+                    break;
+                }
+                Err(error) => {
+                    eprintln!(
+                        "carli: could not check job process group {}: {error}",
+                        job.process_group
+                    );
+                    break;
+                }
             }
-            Ok(WaitStatus::Signaled(_, signal, _)) => {
+        }
+
+        if job.pids.is_empty() {
+            let status = job.status.unwrap_or(1);
+            if status >= 128 {
+                let signal = Signal::try_from(status - 128)
+                    .map(|signal| signal.to_string())
+                    .unwrap_or_else(|_| (status - 128).to_string());
                 eprintln!("[{}] Terminated ({signal}) {}", job.id, job.command);
-                false
+            } else {
+                eprintln!("[{}] Done ({status}) {}", job.id, job.command);
             }
-            Ok(WaitStatus::Stopped(_, _)) => {
-                job.state = JobState::Stopped;
-                true
-            }
-            Ok(WaitStatus::Continued(_)) => {
-                job.state = JobState::Running;
-                true
-            }
-            Err(Errno::ECHILD) => false,
-            Err(error) => {
-                eprintln!("carli: could not check stopped job {}: {error}", job.pid);
-                true
-            }
-            _ => true,
+            false
+        } else {
+            true
         }
     });
 }
@@ -992,6 +1325,7 @@ fn hang_up_job(job: &Job) {
     let _ = killpg(job.process_group, Signal::SIGCONT);
 }
 
+#[cfg(test)]
 fn exit_status_from_process(status: std::process::ExitStatus) -> i32 {
     status
         .code()

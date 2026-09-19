@@ -61,6 +61,8 @@ if the checksum fails or no matching checksum is found.
 - Braced environment-variable expansion with `${NAME}`
 - Previous-command status expansion with `$?`
 - Input redirection with `<` and output redirection with `>` and `>>`
+- Multi-stage pipelines with `|`, last-stage status, redirection precedence,
+  and whole-pipeline job control
 - Foreground process groups and terminal signal handling
 - Terminal-mode preservation across foreground commands and stopped jobs
 - Basic job control with `jobs`, `fg`, and `bg`
@@ -73,17 +75,16 @@ if the checksum fails or no matching checksum is found.
 
 ### Planned
 
-- Pipelines
 - Human-friendly output formatting
 
 See [Safe login-shell installation](docs/installation.md) before registering
 carli in `/etc/shells` or using `chsh`. Keep an authenticated recovery terminal
-open until a separate login succeeds. `carli`'s missing pipelines, command
-separators, conditionals, and other scripting syntax can break SSH remote
+open until a separate login succeeds. `carli`'s missing command separators,
+conditionals, and other scripting syntax can break SSH remote
 commands or scripts that assume a POSIX-compatible account shell.
 
-carli gives each interactive external command its own foreground process group.
-Terminal signals such as Ctrl-C and Ctrl-Z therefore affect the command rather
+carli gives each interactive external command or pipeline its own foreground
+process group. Terminal signals such as Ctrl-C and Ctrl-Z therefore affect the job rather
 than carli itself, and carli reclaims the terminal before displaying its next
 prompt. See [Foreground process groups and signals](docs/foreground-process-groups.md)
 for the design, behavior, and current job-control limitations.
@@ -118,7 +119,7 @@ The viewer could provide aligned and scrollable tables, search, column
 selection, terminal-width-aware layouts, and a way to inspect the original raw
 content. Initial support would focus on CSV, with TSV and JSON following later.
 
-After carli gains pipelines, `view` could also act as an explicit final stage:
+`view` could also act as an explicit final pipeline stage:
 
 ```sh
 generate-report | view --csv
@@ -134,7 +135,7 @@ git log |> timeline
 cargo test |> test-report
 ```
 
-The ordinary `|` pipe would continue to transfer unmodified data between
+The ordinary `|` pipe continues to transfer unmodified data between
 programs. The proposed `|>` operator would explicitly request formatting for
 interactive display. Formatting would remain opt-in so that redirection,
 scripts, and existing command-line tools continue to behave predictably.
@@ -164,6 +165,17 @@ control](docs/job-control.md) for examples and current limitations.
 Commands that are not built-ins are treated as external programs. For example,
 `ls -al`, `cargo test`, and `printenv HOME` are located through `PATH` and run as
 child processes.
+
+Commands can be connected with pipelines:
+
+```sh
+printf 'beta\nalpha\n' | sort | tr a-z A-Z
+```
+
+All stages share one process group, `$?` reports the final stage's status, and
+stateful built-ins inside a pipeline run in isolated child processes. See
+[Pipelines](docs/pipelines.md) for redirection precedence, job control, status
+semantics, and current limitations.
 
 Run one command without starting an interactive prompt with `-c`:
 

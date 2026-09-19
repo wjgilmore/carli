@@ -72,6 +72,7 @@ redirection per command. It reports a parse error for a missing filename or a
 duplicate redirection. File-descriptor syntax such as `2>`, standard-error
 redirection, here-documents, and here-strings are not implemented yet.
 
-Pipelines are also still planned. When they are added, ordinary pipelines and
-redirection will continue to carry raw data so they remain suitable for scripts
-and existing Unix tools.
+In a pipeline, redirections apply to individual stages and override the
+corresponding pipe endpoint. Ordinary pipelines and redirection always carry
+raw data, so they remain suitable for scripts and existing Unix tools. See
+[Pipelines](pipelines.md) for examples and precedence rules.

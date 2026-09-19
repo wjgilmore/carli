@@ -60,8 +60,8 @@ export COLOR="#88c0d0"
 ```
 
 State-changing built-ins such as `cd` and `export` affect the session that
-follows. External commands and redirection are also supported. Pipelines,
-conditionals, command separators, functions, and loops remain unavailable.
+follows. External commands, redirection, and pipelines are also supported.
+Conditionals, command separators, functions, and loops remain unavailable.
 
 ## PATH behavior
 

@@ -12,6 +12,8 @@ pub enum ParseError {
     MissingRedirectionTarget(&'static str),
     DuplicateInputRedirection,
     DuplicateOutputRedirection,
+    MissingPipelineCommand,
+    MultiplePipelineCommands,
 }
 
 impl fmt::Display for ParseError {
@@ -30,6 +32,10 @@ impl fmt::Display for ParseError {
             }
             Self::DuplicateOutputRedirection => {
                 formatter.write_str("multiple output redirections are not supported")
+            }
+            Self::MissingPipelineCommand => formatter.write_str("pipeline stage has no command"),
+            Self::MultiplePipelineCommands => {
+                formatter.write_str("expected one command, found a pipeline")
             }
         }
     }
@@ -56,11 +62,17 @@ pub struct ParsedCommand {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct ParsedPipeline {
+    pub commands: Vec<ParsedCommand>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum Token {
     Word(String),
     Input,
     Output,
     Append,
+    Pipe,
 }
 
 fn is_valid_variable_name(name: &str) -> bool {
@@ -149,6 +161,25 @@ pub fn parse_command_line_with_status(
     line: &str,
     previous_status: i32,
 ) -> Result<ParsedCommand, ParseError> {
+    let mut pipeline = parse_pipeline_with_status(line, previous_status)?;
+    if pipeline.commands.len() > 1 {
+        return Err(ParseError::MultiplePipelineCommands);
+    }
+    Ok(pipeline.commands.pop().unwrap_or(ParsedCommand {
+        words: Vec::new(),
+        input: None,
+        output: None,
+    }))
+}
+
+pub fn parse_pipeline(line: &str) -> Result<ParsedPipeline, ParseError> {
+    parse_pipeline_with_status(line, 0)
+}
+
+pub fn parse_pipeline_with_status(
+    line: &str,
+    previous_status: i32,
+) -> Result<ParsedPipeline, ParseError> {
     let mut tokens = Vec::new();
     let mut word = String::new();
     let mut quote = Quote::None;
@@ -197,6 +228,13 @@ pub fn parse_command_line_with_status(
                     tokens.push(Token::Output);
                 }
             }
+            (Quote::None, '|') => {
+                if word_started {
+                    tokens.push(Token::Word(std::mem::take(&mut word)));
+                    word_started = false;
+                }
+                tokens.push(Token::Pipe);
+            }
             (Quote::None | Quote::Double, '$') => {
                 expand_variable(&mut characters, &mut word, previous_status)?;
                 word_started = true;
@@ -215,9 +253,39 @@ pub fn parse_command_line_with_status(
             if word_started {
                 tokens.push(Token::Word(word));
             }
-            redirections_from_tokens(tokens)
+            pipeline_from_tokens(tokens)
         }
     }
+}
+
+fn pipeline_from_tokens(tokens: Vec<Token>) -> Result<ParsedPipeline, ParseError> {
+    if tokens.is_empty() {
+        return Ok(ParsedPipeline {
+            commands: Vec::new(),
+        });
+    }
+
+    let mut commands = Vec::new();
+    let mut stage = Vec::new();
+
+    for token in tokens {
+        if token == Token::Pipe {
+            let command = redirections_from_tokens(std::mem::take(&mut stage))?;
+            if command.words.is_empty() {
+                return Err(ParseError::MissingPipelineCommand);
+            }
+            commands.push(command);
+        } else {
+            stage.push(token);
+        }
+    }
+
+    let command = redirections_from_tokens(stage)?;
+    if command.words.is_empty() {
+        return Err(ParseError::MissingPipelineCommand);
+    }
+    commands.push(command);
+    Ok(ParsedPipeline { commands })
 }
 
 fn redirections_from_tokens(tokens: Vec<Token>) -> Result<ParsedCommand, ParseError> {
@@ -252,6 +320,7 @@ fn redirections_from_tokens(tokens: Vec<Token>) -> Result<ParsedCommand, ParseEr
                     OutputRedirection::Truncate(path)
                 });
             }
+            Token::Pipe => return Err(ParseError::MultiplePipelineCommands),
         }
     }
 
@@ -461,6 +530,63 @@ mod tests {
                 output: Some(OutputRedirection::Append("output.txt".to_string())),
             }
         );
+    }
+
+    #[test]
+    fn parses_pipeline_stages_with_independent_redirections() {
+        assert_eq!(
+            parse_pipeline("cat < input | grep needle | sort > output").unwrap(),
+            ParsedPipeline {
+                commands: vec![
+                    ParsedCommand {
+                        words: vec!["cat".to_string()],
+                        input: Some("input".to_string()),
+                        output: None,
+                    },
+                    ParsedCommand {
+                        words: vec!["grep".to_string(), "needle".to_string()],
+                        input: None,
+                        output: None,
+                    },
+                    ParsedCommand {
+                        words: vec!["sort".to_string()],
+                        input: None,
+                        output: Some(OutputRedirection::Truncate("output".to_string())),
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn preserves_quoted_and_escaped_pipe_characters() {
+        assert_eq!(
+            parse_pipeline(r#"printf '%s%s%s' '|' "|" \|"#).unwrap(),
+            ParsedPipeline {
+                commands: vec![ParsedCommand {
+                    words: vec![
+                        "printf".to_string(),
+                        "%s%s%s".to_string(),
+                        "|".to_string(),
+                        "|".to_string(),
+                        "|".to_string(),
+                    ],
+                    input: None,
+                    output: None,
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_missing_pipeline_stages() {
+        for line in ["| cat", "cat |", "cat || sort", "cat | > output"] {
+            assert_eq!(
+                parse_pipeline(line),
+                Err(ParseError::MissingPipelineCommand),
+                "line: {line}"
+            );
+        }
     }
 
     #[test]
@@ -688,6 +814,14 @@ mod tests {
             (
                 ParseError::DuplicateOutputRedirection,
                 "multiple output redirections are not supported",
+            ),
+            (
+                ParseError::MissingPipelineCommand,
+                "pipeline stage has no command",
+            ),
+            (
+                ParseError::MultiplePipelineCommands,
+                "expected one command, found a pipeline",
             ),
         ];
         for (error, message) in cases {

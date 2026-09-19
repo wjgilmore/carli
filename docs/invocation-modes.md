@@ -86,14 +86,14 @@ carli -c 'requested command'
 
 Supporting this form prevents carli from opening an interactive prompt when a
 remote command expects ordinary stdout, stderr, and an exit status. However,
-remote commands that depend on POSIX shell syntax such as pipelines, command
+remote commands that depend on unsupported POSIX shell syntax such as command
 separators, substitutions, or conditionals remain incompatible. Do not select
 carli for an account that relies on those SSH command forms.
 
 ## Current syntax limitations
 
-`-c` receives one carli command, not a complete shell script. Command
-separators, pipelines, conditionals, functions, and loops are not implemented.
+`-c` receives one carli pipeline, not a complete shell script. Command
+separators, conditionals, functions, and loops are not implemented.
 For example, `carli -c 'first; second'` does not currently execute two commands.
 Use batch input with one command per line when multiple sequential commands are
 needed.
