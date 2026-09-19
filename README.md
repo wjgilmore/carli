@@ -21,7 +21,26 @@ For a stable system path, recovery precautions, and guarded registration in
 `/etc/shells`, follow [Safe login-shell installation](docs/installation.md).
 
 Versioned releases also provide target-specific archives and a `SHA256SUMS`
-manifest. Verify the checksum before extracting an archive.
+manifest. Download the manifest into the same directory as the archive, set
+`archive` to the downloaded filename, and verify it before extracting anything.
+
+On Linux:
+
+```sh
+archive=carli-vVERSION-TARGET.tar.gz
+awk -v file="$archive" '$2 == file' SHA256SUMS | sha256sum --check -
+```
+
+On macOS:
+
+```sh
+archive=carli-vVERSION-TARGET.tar.gz
+awk -v file="$archive" '$2 == file' SHA256SUMS | shasum -a 256 -c -
+```
+
+Replace `VERSION` and `TARGET` with the downloaded archive's values. The command
+must print the archive name followed by `OK`. Do not extract or run the archive
+if the checksum fails or no matching checksum is found.
 
 ## Features
 
